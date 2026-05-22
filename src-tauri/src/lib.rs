@@ -12,9 +12,11 @@ use std::{
 };
 use wait_timeout::ChildExt;
 
-const KUBECTL_TIMEOUT: Duration = Duration::from_secs(30);
+const DEFAULT_KUBECTL_TIMEOUT: Duration = Duration::from_secs(120);
+const KUBECTL_REQUEST_TIMEOUT: &str = "90s";
 const COPY_TIMEOUT: Duration = Duration::from_secs(600);
 const MAX_KUBECONFIG_BYTES: u64 = 10 * 1024 * 1024;
+const KUBECTL_TIMEOUT_ENV: &str = "K8S_FILE_EXPLORER_KUBECTL_TIMEOUT_SECONDS";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -140,7 +142,7 @@ fn check_kubectl() -> ToolStatus {
     let args = os_args(["version", "--client", "-o", "json"]);
     let program = kubectl_program();
 
-    match run_program(&program, &args, KUBECTL_TIMEOUT) {
+    match run_program(&program, &args, kubectl_timeout()) {
         Ok(output) if output.success => {
             let version = serde_json::from_str::<Value>(&output.stdout)
                 .ok()
@@ -240,7 +242,7 @@ fn list_namespaces(kubeconfig: String) -> Result<Vec<NamespaceEntry>, String> {
         OsString::from("json"),
     ];
 
-    let stdout = run_kubectl(args, KUBECTL_TIMEOUT)?;
+    let stdout = run_kubectl(args)?;
     let value: Value = serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
     let mut namespaces = value
         .get("items")
@@ -276,7 +278,7 @@ fn list_pods(kubeconfig: String, namespace: String) -> Result<Vec<PodEntry>, Str
         OsString::from("json"),
     ];
 
-    let stdout = run_kubectl(args, KUBECTL_TIMEOUT)?;
+    let stdout = run_kubectl(args)?;
     let value: Value = serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
     let mut pods = value
         .get("items")
@@ -357,7 +359,7 @@ fn list_containers(
         OsString::from("json"),
     ];
 
-    let stdout = run_kubectl(args, KUBECTL_TIMEOUT)?;
+    let stdout = run_kubectl(args)?;
     let value: Value = serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
     let mut readiness = HashMap::new();
     if let Some(statuses) = value
@@ -420,7 +422,7 @@ fn list_remote_dir(target: RemoteTarget, path: String) -> Result<Vec<RemoteFileE
     args.push(OsString::from("--"));
     args.push(OsString::from(&path));
 
-    let stdout = run_kubectl(args, KUBECTL_TIMEOUT)?;
+    let stdout = run_kubectl(args)?;
     let mut entries = stdout
         .lines()
         .filter_map(|line| parse_ls_line(line, &path))
@@ -516,7 +518,7 @@ fn copy_remote_to_local(
     args.push(OsString::from(format!("{}:{remote_path}", target.pod)));
     args.push(OsString::from(&local_path));
 
-    run_kubectl(args, COPY_TIMEOUT)?;
+    run_kubectl_with_timeout(args, COPY_TIMEOUT)?;
     Ok(TransferResult {
         source: remote_path,
         destination: local_path,
@@ -543,7 +545,7 @@ fn copy_local_to_remote(
     args.push(OsString::from(&local_path));
     args.push(OsString::from(format!("{}:{remote_path}", target.pod)));
 
-    run_kubectl(args, COPY_TIMEOUT)?;
+    run_kubectl_with_timeout(args, COPY_TIMEOUT)?;
     Ok(TransferResult {
         source: local_path,
         destination: remote_path,
@@ -580,14 +582,35 @@ fn open_local_file(path: String) -> Result<(), String> {
     open::that(path).map_err(|error| error.to_string())
 }
 
-fn run_kubectl(args: Vec<OsString>, timeout: Duration) -> Result<String, String> {
+fn run_kubectl(args: Vec<OsString>) -> Result<String, String> {
+    run_kubectl_with_timeout(args, kubectl_timeout())
+}
+
+fn run_kubectl_with_timeout(args: Vec<OsString>, timeout: Duration) -> Result<String, String> {
     let program = kubectl_program();
-    let output = run_program(&program, &args, timeout)?;
+    let output = run_program(&program, &kubectl_args_with_request_timeout(args), timeout)?;
     if output.success {
         Ok(output.stdout)
     } else {
         Err(format_process_error("kubectl", &output))
     }
+}
+
+fn kubectl_args_with_request_timeout(args: Vec<OsString>) -> Vec<OsString> {
+    let mut with_timeout = Vec::with_capacity(args.len() + 2);
+    with_timeout.push(OsString::from("--request-timeout"));
+    with_timeout.push(OsString::from(KUBECTL_REQUEST_TIMEOUT));
+    with_timeout.extend(args);
+    with_timeout
+}
+
+fn kubectl_timeout() -> Duration {
+    env::var(KUBECTL_TIMEOUT_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(DEFAULT_KUBECTL_TIMEOUT)
 }
 
 fn run_program(
@@ -619,7 +642,9 @@ fn run_program(
             let _ = child.kill();
             let _ = child.wait();
             return Err(format!(
-                "Przekroczono limit czasu dla programu `{program_display}`."
+                "Przekroczono limit czasu ({timeout_seconds}s) dla programu `{program_display}`. \
+                 Możesz zwiększyć limit zmienną środowiskową {KUBECTL_TIMEOUT_ENV}.",
+                timeout_seconds = timeout.as_secs()
             ));
         }
     };
