@@ -43,7 +43,7 @@ button {
 
 .app-shell {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) 168px;
+  grid-template-rows: auto auto minmax(0, 1fr) 140px 190px;
   height: 100%;
   min-width: 920px;
   background: #eef1f4;
@@ -403,6 +403,91 @@ button {
   padding: 16px 12px;
   color: var(--text-muted);
   font-size: 13px;
+}
+
+.console-panel {
+  display: grid;
+  grid-template-rows: 28px minmax(0, 1fr);
+  min-height: 0;
+  border-top: 1px solid var(--border);
+  background: #101820;
+  color: #d8e2ec;
+}
+
+.console-header {
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border-bottom: 1px solid #293746;
+  background: #172331;
+  color: #aab9c8;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.console-list {
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 12px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.console-entry {
+  padding: 0 0 8px;
+  border-bottom: 1px solid #243342;
+  margin-bottom: 8px;
+}
+
+.console-entry:last-child {
+  margin-bottom: 0;
+}
+
+.console-command {
+  display: grid;
+  grid-template-columns: 74px 48px 72px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  color: #9fb2c4;
+}
+
+.console-command code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #e8f0f7;
+  font: inherit;
+}
+
+.console-entry.success .console-command span:nth-child(2) {
+  color: #79d99e;
+}
+
+.console-entry.running .console-command span:nth-child(2) {
+  color: #f1c96b;
+}
+
+.console-entry.failed .console-command span:nth-child(2) {
+  color: #ff9b91;
+}
+
+.console-entry pre {
+  margin: 4px 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #c7d3df;
+  font: inherit;
+}
+
+.console-entry pre.muted,
+.console-empty {
+  color: #7f91a3;
+}
+
+.console-empty {
+  padding: 8px 0;
 }
 
 @keyframes spin {

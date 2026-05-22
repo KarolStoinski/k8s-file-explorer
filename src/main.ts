@@ -92,6 +92,19 @@ interface TransferEntry {
   finishedAt: number | null;
 }
 
+interface KubectlLogEntry {
+  id: number;
+  command: string;
+  success: boolean;
+  code: number | null;
+  stdout: string;
+  stderr: string;
+  error: string | null;
+  startedAt: number;
+  durationMs: number;
+  finished: boolean;
+}
+
 interface RemoteState {
   level: RemoteLevel;
   kubeconfigs: KubeconfigEntry[];
@@ -123,6 +136,7 @@ interface AppState {
   remote: RemoteState;
   local: LocalState;
   transfers: TransferEntry[];
+  kubectlLogs: KubectlLogEntry[];
   nextTransferId: number;
   bootError: string | null;
 }
@@ -162,6 +176,7 @@ const state: AppState = {
     error: null,
   },
   transfers: [],
+  kubectlLogs: [],
   nextTransferId: 1,
   bootError: null,
 };
@@ -180,6 +195,10 @@ app.addEventListener("keydown", (event) => {
 
 void init();
 
+window.setInterval(() => {
+  void loadKubectlLogs();
+}, 1000);
+
 async function init(): Promise<void> {
   render();
 
@@ -188,11 +207,29 @@ async function init(): Promise<void> {
       invoke<ToolStatus>("check_kubectl"),
       loadKubeconfigs(false),
       loadLocalDir(null, false),
+      loadKubectlLogs(false),
     ]);
     state.kubectl = kubectl;
   } catch (error) {
     state.bootError = formatError(error);
   } finally {
+    render();
+  }
+}
+
+async function loadKubectlLogs(shouldRender = true): Promise<void> {
+  try {
+    const logs = await invoke<KubectlLogEntry[]>("get_kubectl_logs");
+    const lastCurrent = state.kubectlLogs.at(-1)?.id ?? null;
+    const lastNext = logs.at(-1)?.id ?? null;
+    if (lastCurrent === lastNext && state.kubectlLogs.length === logs.length) {
+      return;
+    }
+    state.kubectlLogs = logs;
+  } catch {
+    return;
+  }
+  if (shouldRender) {
     render();
   }
 }
@@ -824,6 +861,7 @@ function render(): void {
         ${renderLocalPanel()}
       </main>
       ${renderTransfers()}
+      ${renderKubectlConsole()}
     </div>
   `;
 
@@ -1135,6 +1173,38 @@ function renderTransfers(): string {
   `;
 }
 
+function renderKubectlConsole(): string {
+  const rows = state.kubectlLogs.length
+    ? state.kubectlLogs
+        .slice()
+        .reverse()
+        .map((entry) => {
+          const output = [entry.stdout, entry.stderr, entry.error].filter(Boolean).join("\n");
+          return `
+            <div class="console-entry ${entry.finished ? entry.success ? "success" : "failed" : "running"}">
+              <div class="console-command">
+                <span>${escapeHtml(formatLogTime(entry.startedAt))}</span>
+                <span>${escapeHtml(kubectlLogStatus(entry))}</span>
+                <span>${escapeHtml(kubectlLogDuration(entry))}</span>
+                <code>${escapeHtml(entry.command)}</code>
+              </div>
+              ${output ? `<pre>${escapeHtml(output)}</pre>` : `<pre class="muted">Brak outputu</pre>`}
+            </div>
+          `;
+        })
+        .join("")
+    : `<div class="console-empty">Brak wywołań kubectl</div>`;
+
+  return `
+    <section class="console-panel" aria-label="Konsola kubectl">
+      <div class="console-header">
+        <span>Konsola kubectl</span>
+      </div>
+      <div class="console-list">${rows}</div>
+    </section>
+  `;
+}
+
 function canDownload(): boolean {
   return Boolean(selectedRemoteEntry() && remoteTarget() && state.local.path);
 }
@@ -1243,6 +1313,31 @@ function elapsedLabel(entry: TransferEntry): string {
   const end = entry.finishedAt ?? Date.now();
   const seconds = Math.max(0, Math.round((end - entry.startedAt) / 1000));
   return seconds <= 1 ? "1 s" : `${seconds} s`;
+}
+
+function kubectlLogStatus(entry: KubectlLogEntry): string {
+  if (!entry.finished) {
+    return "RUN";
+  }
+  return entry.success ? "OK" : "BŁĄD";
+}
+
+function kubectlLogDuration(entry: KubectlLogEntry): string {
+  if (entry.finished) {
+    return `${entry.durationMs} ms`;
+  }
+  return `${Math.max(0, Date.now() - entry.startedAt)} ms`;
+}
+
+function formatLogTime(value: number): string {
+  if (!value) {
+    return "";
+  }
+  return new Date(value).toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 function formatError(error: unknown): string {

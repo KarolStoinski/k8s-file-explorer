@@ -8,6 +8,8 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::atomic::{AtomicU64, Ordering},
+    sync::{Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use wait_timeout::ChildExt;
@@ -17,6 +19,10 @@ const KUBECTL_REQUEST_TIMEOUT: &str = "90s";
 const COPY_TIMEOUT: Duration = Duration::from_secs(600);
 const MAX_KUBECONFIG_BYTES: u64 = 10 * 1024 * 1024;
 const KUBECTL_TIMEOUT_ENV: &str = "K8S_FILE_EXPLORER_KUBECTL_TIMEOUT_SECONDS";
+const MAX_KUBECTL_LOGS: usize = 200;
+
+static KUBECTL_LOGS: OnceLock<Mutex<Vec<KubectlLogEntry>>> = OnceLock::new();
+static NEXT_KUBECTL_LOG_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -137,12 +143,27 @@ struct ProcessOutput {
     stderr: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct KubectlLogEntry {
+    id: u64,
+    command: String,
+    success: bool,
+    code: Option<i32>,
+    stdout: String,
+    stderr: String,
+    error: Option<String>,
+    started_at: u64,
+    duration_ms: u128,
+    finished: bool,
+}
+
 #[tauri::command]
 fn check_kubectl() -> ToolStatus {
-    let args = os_args(["version", "--client", "-o", "json"]);
+    let args = kubectl_args_with_request_timeout(os_args(["version", "--client", "-o", "json"]));
     let program = kubectl_program();
 
-    match run_program(&program, &args, kubectl_timeout()) {
+    match run_logged_kubectl_program(&program, &args, kubectl_timeout()) {
         Ok(output) if output.success => {
             let version = serde_json::from_str::<Value>(&output.stdout)
                 .ok()
@@ -229,6 +250,14 @@ fn scan_kubeconfigs() -> Result<Vec<KubeconfigEntry>, String> {
 #[tauri::command]
 fn get_home_dir() -> Result<String, String> {
     Ok(path_to_string(&home_dir()?))
+}
+
+#[tauri::command]
+fn get_kubectl_logs() -> Vec<KubectlLogEntry> {
+    kubectl_logs()
+        .lock()
+        .map(|logs| logs.clone())
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -588,12 +617,120 @@ fn run_kubectl(args: Vec<OsString>) -> Result<String, String> {
 
 fn run_kubectl_with_timeout(args: Vec<OsString>, timeout: Duration) -> Result<String, String> {
     let program = kubectl_program();
-    let output = run_program(&program, &kubectl_args_with_request_timeout(args), timeout)?;
+    let args = kubectl_args_with_request_timeout(args);
+    let output = run_logged_kubectl_program(&program, &args, timeout)?;
     if output.success {
         Ok(output.stdout)
     } else {
         Err(format_process_error("kubectl", &output))
     }
+}
+
+fn run_logged_kubectl_program(
+    program: &OsStr,
+    args: &[OsString],
+    timeout: Duration,
+) -> Result<ProcessOutput, String> {
+    let command = format_command(program, args);
+    let id = NEXT_KUBECTL_LOG_ID.fetch_add(1, Ordering::Relaxed);
+    let started_at = now_millis();
+    let started = std::time::Instant::now();
+    push_kubectl_log(KubectlLogEntry {
+        id,
+        command,
+        success: false,
+        code: None,
+        stdout: String::new(),
+        stderr: String::new(),
+        error: None,
+        started_at,
+        duration_ms: 0,
+        finished: false,
+    });
+
+    let output = match run_program(program, args, timeout) {
+        Ok(output) => output,
+        Err(error) => {
+            update_kubectl_log(KubectlLogEntry {
+                id,
+                command: format_command(program, args),
+                success: false,
+                code: None,
+                stdout: String::new(),
+                stderr: String::new(),
+                error: Some(error.clone()),
+                started_at,
+                duration_ms: started.elapsed().as_millis(),
+                finished: true,
+            });
+            return Err(error);
+        }
+    };
+
+    update_kubectl_log(KubectlLogEntry {
+        id,
+        command: format_command(program, args),
+        success: output.success,
+        code: output.code,
+        stdout: output.stdout.clone(),
+        stderr: output.stderr.clone(),
+        error: None,
+        started_at,
+        duration_ms: started.elapsed().as_millis(),
+        finished: true,
+    });
+    Ok(output)
+}
+
+fn kubectl_logs() -> &'static Mutex<Vec<KubectlLogEntry>> {
+    KUBECTL_LOGS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn push_kubectl_log(entry: KubectlLogEntry) {
+    let Ok(mut logs) = kubectl_logs().lock() else {
+        return;
+    };
+    logs.push(entry);
+    if logs.len() > MAX_KUBECTL_LOGS {
+        let overflow = logs.len() - MAX_KUBECTL_LOGS;
+        logs.drain(0..overflow);
+    }
+}
+
+fn update_kubectl_log(entry: KubectlLogEntry) {
+    let Ok(mut logs) = kubectl_logs().lock() else {
+        return;
+    };
+    if let Some(existing) = logs.iter_mut().find(|log| log.id == entry.id) {
+        *existing = entry;
+    } else {
+        logs.push(entry);
+    }
+}
+
+fn now_millis() -> u64 {
+    system_time_to_millis(SystemTime::now()).unwrap_or_default()
+}
+
+fn format_command(program: &OsStr, args: &[OsString]) -> String {
+    std::iter::once(program.to_os_string())
+        .chain(args.iter().cloned())
+        .map(|part| quote_arg(&part))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn quote_arg(value: &OsStr) -> String {
+    let value = value.to_string_lossy();
+    if value.is_empty() {
+        return "''".to_string();
+    }
+    if value.chars().all(|character| {
+        character.is_ascii_alphanumeric() || matches!(character, '/' | '.' | '_' | '-' | ':' | '=')
+    }) {
+        return value.to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn kubectl_args_with_request_timeout(args: Vec<OsString>) -> Vec<OsString> {
@@ -961,6 +1098,7 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             check_kubectl,
+            get_kubectl_logs,
             scan_kubeconfigs,
             get_home_dir,
             list_namespaces,
