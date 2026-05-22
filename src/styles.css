@@ -103,6 +103,19 @@ button {
   gap: 8px;
 }
 
+.kubectl-activity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid #d6bb65;
+  border-radius: 7px;
+  background: #fff8df;
+  color: #6f5700;
+  font-size: 12px;
+}
+
 .tool-button,
 .icon-button {
   display: inline-flex;
@@ -141,6 +154,7 @@ button {
 
 .tool-button svg,
 .icon-button svg,
+.kubectl-activity svg,
 .file-row svg,
 .empty-state svg,
 .breadcrumbs svg,
@@ -353,6 +367,8 @@ button {
 }
 
 .empty-state .lucide-loader,
+.kubectl-activity .lucide-loader,
+.icon-button .lucide-loader,
 .transfer-row .lucide-loader {
   animation: spin 1s linear infinite;
 }

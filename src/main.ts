@@ -137,6 +137,7 @@ interface AppState {
   local: LocalState;
   transfers: TransferEntry[];
   kubectlLogs: KubectlLogEntry[];
+  activeKubectlActions: number;
   nextTransferId: number;
   bootError: string | null;
 }
@@ -177,6 +178,7 @@ const state: AppState = {
   },
   transfers: [],
   kubectlLogs: [],
+  activeKubectlActions: 0,
   nextTransferId: 1,
   bootError: null,
 };
@@ -234,6 +236,17 @@ async function loadKubectlLogs(shouldRender = true): Promise<void> {
   }
 }
 
+async function invokeKubectl<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  state.activeKubectlActions += 1;
+  render();
+  try {
+    return await invoke<T>(command, args);
+  } finally {
+    state.activeKubectlActions = Math.max(0, state.activeKubectlActions - 1);
+    render();
+  }
+}
+
 async function handleClick(event: MouseEvent): Promise<void> {
   const target = event.target as HTMLElement;
   const action = target.closest<HTMLButtonElement>("[data-action]");
@@ -266,6 +279,10 @@ async function handleClick(event: MouseEvent): Promise<void> {
 }
 
 async function handleDoubleClick(event: MouseEvent): Promise<void> {
+  if (state.remote.loading || state.activeKubectlActions > 0) {
+    return;
+  }
+
   const target = event.target as HTMLElement;
   const row = target.closest<HTMLElement>("[data-panel][data-index]");
   if (!row) {
@@ -288,6 +305,9 @@ async function handleKeydown(event: KeyboardEvent): Promise<void> {
   const target = event.target as HTMLElement;
   const action = target.closest<HTMLElement>("[data-panel][data-index]");
   if (event.key === "Enter" && action) {
+    if (action.dataset.panel === "remote" && (state.remote.loading || state.activeKubectlActions > 0)) {
+      return;
+    }
     const index = Number(action.dataset.index);
     if (action.dataset.panel === "remote") {
       await openRemoteIndex(index);
@@ -303,6 +323,13 @@ async function handleKeydown(event: KeyboardEvent): Promise<void> {
 }
 
 async function runAction(action: string): Promise<void> {
+  if (
+    (state.remote.loading || state.activeKubectlActions > 0) &&
+    ["refresh-remote", "remote-up", "remote-root", "download", "upload"].includes(action)
+  ) {
+    return;
+  }
+
   switch (action) {
     case "refresh-remote":
       await refreshRemote();
@@ -357,6 +384,10 @@ async function loadKubeconfigs(showLoading: boolean): Promise<void> {
 }
 
 async function openRemoteIndex(index: number): Promise<void> {
+  if (state.remote.loading || state.activeKubectlActions > 0) {
+    return;
+  }
+
   switch (state.remote.level) {
     case "kubeconfigs":
       await openKubeconfig(index);
@@ -404,7 +435,7 @@ async function openKubeconfig(index: number): Promise<void> {
   render();
 
   try {
-    state.remote.namespaces = await invoke<NamespaceEntry[]>("list_namespaces", {
+    state.remote.namespaces = await invokeKubectl<NamespaceEntry[]>("list_namespaces", {
       kubeconfig: kubeconfig.path,
     });
   } catch (error) {
@@ -438,7 +469,7 @@ async function openNamespace(index: number): Promise<void> {
   render();
 
   try {
-    state.remote.pods = await invoke<PodEntry[]>("list_pods", {
+    state.remote.pods = await invokeKubectl<PodEntry[]>("list_pods", {
       kubeconfig: kubeconfig.path,
       namespace: namespace.name,
     });
@@ -471,7 +502,7 @@ async function openPod(index: number): Promise<void> {
   render();
 
   try {
-    const containers = await invoke<ContainerEntry[]>("list_containers", {
+    const containers = await invokeKubectl<ContainerEntry[]>("list_containers", {
       kubeconfig: kubeconfig.path,
       namespace: namespace.name,
       pod: pod.name,
@@ -530,7 +561,7 @@ async function openRemoteEntry(index: number): Promise<void> {
 
   const transferId = addTransfer("temp", entry.path, "temp");
   try {
-    const result = await invoke<TempDownloadResult>("download_remote_to_temp", {
+    const result = await invokeKubectl<TempDownloadResult>("download_remote_to_temp", {
       target,
       remotePath: entry.path,
     });
@@ -559,7 +590,7 @@ async function loadRemotePath(path: string): Promise<void> {
   render();
 
   try {
-    state.remote.entries = await invoke<RemoteFileEntry[]>("list_remote_dir", {
+    state.remote.entries = await invokeKubectl<RemoteFileEntry[]>("list_remote_dir", {
       target,
       path,
     });
@@ -711,7 +742,7 @@ async function downloadSelectedRemote(): Promise<void> {
 
   const transferId = addTransfer("download", entry.path, destination);
   try {
-    await invoke("copy_remote_to_local", {
+    await invokeKubectl("copy_remote_to_local", {
       target,
       remotePath: entry.path,
       localPath: destination,
@@ -737,7 +768,7 @@ async function uploadSelectedLocal(): Promise<void> {
 
   const transferId = addTransfer("upload", entry.path, destination);
   try {
-    await invoke("copy_local_to_remote", {
+    await invokeKubectl("copy_local_to_remote", {
       target,
       localPath: entry.path,
       remotePath: destination,
@@ -847,6 +878,7 @@ function render(): void {
           </div>
         </div>
         <div class="top-actions">
+          ${renderKubectlActivity()}
           <button class="tool-button" type="button" data-action="download" title="Pobierz z poda" ${canDownload() ? "" : "disabled"}>
             <i data-lucide="download"></i><span>Pobierz</span>
           </button>
@@ -879,6 +911,18 @@ function renderKubectlStatus(): string {
   return `kubectl ${escapeHtml(state.kubectl.version ?? "dostępny")}`;
 }
 
+function renderKubectlActivity(): string {
+  if (state.activeKubectlActions === 0) {
+    return "";
+  }
+  return `
+    <span class="kubectl-activity" aria-live="polite">
+      <i data-lucide="loader"></i>
+      <span>kubectl działa</span>
+    </span>
+  `;
+}
+
 function renderRemotePanel(): string {
   return `
     <section class="panel remote-panel" aria-label="Kubernetes">
@@ -888,14 +932,14 @@ function renderRemotePanel(): string {
           <div class="breadcrumbs">${renderRemoteBreadcrumbs()}</div>
         </div>
         <div class="panel-actions">
-          <button class="icon-button" type="button" data-action="remote-root" title="Katalog główny Kubernetes">
+          <button class="icon-button" type="button" data-action="remote-root" title="Katalog główny Kubernetes" ${state.remote.loading || state.activeKubectlActions > 0 ? "disabled" : ""}>
             <i data-lucide="network"></i>
           </button>
-          <button class="icon-button" type="button" data-action="remote-up" title="Poziom wyżej" ${state.remote.level === "kubeconfigs" ? "disabled" : ""}>
+          <button class="icon-button" type="button" data-action="remote-up" title="Poziom wyżej" ${state.remote.level === "kubeconfigs" || state.remote.loading || state.activeKubectlActions > 0 ? "disabled" : ""}>
             <i data-lucide="arrow-up"></i>
           </button>
-          <button class="icon-button" type="button" data-action="refresh-remote" title="Odśwież">
-            <i data-lucide="refresh-cw"></i>
+          <button class="icon-button" type="button" data-action="refresh-remote" title="Odśwież" ${state.remote.loading || state.activeKubectlActions > 0 ? "disabled" : ""}>
+            <i data-lucide="${state.remote.loading || state.activeKubectlActions > 0 ? "loader" : "refresh-cw"}"></i>
           </button>
         </div>
       </div>
@@ -1206,11 +1250,17 @@ function renderKubectlConsole(): string {
 }
 
 function canDownload(): boolean {
-  return Boolean(selectedRemoteEntry() && remoteTarget() && state.local.path);
+  return Boolean(selectedRemoteEntry() && remoteTarget() && state.local.path && !state.remote.loading && state.activeKubectlActions === 0);
 }
 
 function canUpload(): boolean {
-  return Boolean(selectedLocalEntry() && remoteTarget() && state.remote.level === "remote");
+  return Boolean(
+    selectedLocalEntry() &&
+      remoteTarget() &&
+      state.remote.level === "remote" &&
+      !state.remote.loading &&
+      state.activeKubectlActions === 0,
+  );
 }
 
 function updateSelection(panel: string): void {
