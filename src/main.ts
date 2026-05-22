@@ -116,6 +116,7 @@ interface RemoteState {
   namespace: NamespaceEntry | null;
   pod: PodEntry | null;
   container: ContainerEntry | null;
+  tarAvailable: boolean | null;
   path: string;
   selectedIndex: number | null;
   selectedIndices: number[];
@@ -174,6 +175,7 @@ const state: AppState = {
     namespace: null,
     pod: null,
     container: null,
+    tarAvailable: null,
     path: "/",
     selectedIndex: null,
     selectedIndices: [],
@@ -590,6 +592,7 @@ async function openKubeconfig(index: number): Promise<void> {
     namespace: null,
     pod: null,
     container: null,
+    tarAvailable: null,
     namespaces: [],
     pods: [],
     containers: [],
@@ -627,6 +630,7 @@ async function openNamespace(index: number): Promise<void> {
     namespace,
     pod: null,
     container: null,
+    tarAvailable: null,
     pods: [],
     containers: [],
     entries: [],
@@ -687,9 +691,9 @@ async function openPod(index: number): Promise<void> {
     }
 
     state.remote.container = containers[0] ?? null;
+    state.remote.tarAvailable = null;
     state.remote.level = "remote";
-    state.remote.loading = false;
-    await loadRemotePath("/");
+    await enterRemoteContainerRoot();
   } catch (error) {
     state.remote.level = "pods";
     state.remote.error = formatError(error);
@@ -704,9 +708,33 @@ async function openContainer(index: number): Promise<void> {
     return;
   }
   state.remote.container = container;
+  state.remote.tarAvailable = null;
   state.remote.level = "remote";
-  state.remote.selectedIndex = null;
-  state.remote.selectedIndices = [];
+  await enterRemoteContainerRoot();
+}
+
+async function enterRemoteContainerRoot(): Promise<void> {
+  const target = remoteTarget();
+  if (!target) {
+    await loadRemotePath("/");
+    return;
+  }
+  state.remote = {
+    ...state.remote,
+    level: "remote",
+    path: "/",
+    entries: [],
+    selectedIndex: null,
+    selectedIndices: [],
+    loading: true,
+    error: null,
+  };
+  render();
+  try {
+    state.remote.tarAvailable = await invokeKubectl<boolean>("check_container_tar", { target });
+  } catch {
+    state.remote.tarAvailable = false;
+  }
   await loadRemotePath("/");
 }
 
@@ -868,6 +896,7 @@ async function remoteUp(): Promise<void> {
       state.remote.namespace = null;
       state.remote.pod = null;
       state.remote.container = null;
+      state.remote.tarAvailable = null;
       state.remote.selectedIndex = null;
       state.remote.selectedIndices = [];
       render();
@@ -876,6 +905,7 @@ async function remoteUp(): Promise<void> {
       state.remote.level = "pods";
       state.remote.pod = null;
       state.remote.container = null;
+      state.remote.tarAvailable = null;
       state.remote.selectedIndex = null;
       state.remote.selectedIndices = [];
       render();
@@ -888,10 +918,12 @@ async function remoteUp(): Promise<void> {
       if (state.remote.containers.length > 1) {
         state.remote.level = "containers";
         state.remote.container = null;
+        state.remote.tarAvailable = null;
       } else {
         state.remote.level = "pods";
         state.remote.pod = null;
         state.remote.container = null;
+        state.remote.tarAvailable = null;
       }
       state.remote.entries = [];
       state.remote.selectedIndex = null;
@@ -912,6 +944,7 @@ async function openRemoteBreadcrumb(level: string, path: string): Promise<void> 
       state.remote.namespace = null;
       state.remote.pod = null;
       state.remote.container = null;
+      state.remote.tarAvailable = null;
       state.remote.pods = [];
       state.remote.containers = [];
       state.remote.entries = [];
@@ -924,6 +957,7 @@ async function openRemoteBreadcrumb(level: string, path: string): Promise<void> 
       state.remote.level = "pods";
       state.remote.pod = null;
       state.remote.container = null;
+      state.remote.tarAvailable = null;
       state.remote.containers = [];
       state.remote.entries = [];
       state.remote.path = "/";
@@ -935,6 +969,7 @@ async function openRemoteBreadcrumb(level: string, path: string): Promise<void> 
       if (state.remote.containers.length > 1) {
         state.remote.level = "containers";
         state.remote.container = null;
+        state.remote.tarAvailable = null;
       } else {
         state.remote.level = "remote";
       }
@@ -948,7 +983,7 @@ async function openRemoteBreadcrumb(level: string, path: string): Promise<void> 
       }
       return;
     case "container":
-      await loadRemotePath("/");
+      await enterRemoteContainerRoot();
       return;
     case "remote-path":
       await loadRemotePath(path || "/");
@@ -1059,6 +1094,7 @@ function resetRemoteToRoot(): void {
   state.remote.namespace = null;
   state.remote.pod = null;
   state.remote.container = null;
+  state.remote.tarAvailable = null;
   state.remote.namespaces = [];
   state.remote.pods = [];
   state.remote.containers = [];
@@ -1232,11 +1268,23 @@ function renderRemotePanel(): string {
         ${renderRemoteRows()}
       </div>
       <div class="panel-footer">
+        ${renderTarWarning()}
         <button class="tool-button" type="button" data-action="download" title="Pobierz z poda" ${canDownload() ? "" : "disabled"}>
           <i data-lucide="download"></i><span>Pobierz</span>
         </button>
       </div>
     </section>
+  `;
+}
+
+function renderTarWarning(): string {
+  if (state.remote.level !== "remote" || state.remote.tarAvailable !== false) {
+    return "";
+  }
+  return `
+    <div class="tar-warning" role="alert">
+      Kontener nie ma narzędzia tar, więc pobieranie i wysyłanie przez kubectl cp nie będzie działać.
+    </div>
   `;
 }
 
@@ -1619,7 +1667,13 @@ function renderContextMenu(): string {
 }
 
 function canDownload(): boolean {
-  return Boolean(selectedRemoteEntries().length > 0 && remoteTarget() && state.local.path && !state.remote.loading);
+  return Boolean(
+    selectedRemoteEntries().length > 0 &&
+      remoteTarget() &&
+      state.local.path &&
+      !state.remote.loading &&
+      state.remote.tarAvailable !== false,
+  );
 }
 
 function canUpload(): boolean {
@@ -1627,7 +1681,8 @@ function canUpload(): boolean {
     selectedLocalEntries().length > 0 &&
       remoteTarget() &&
       state.remote.level === "remote" &&
-      !state.remote.loading,
+      !state.remote.loading &&
+      state.remote.tarAvailable !== false,
   );
 }
 

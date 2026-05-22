@@ -332,6 +332,27 @@ fn list_containers(
     Ok(containers)
 }
 
+#[tauri::command]
+fn check_container_tar(target: RemoteTarget) -> Result<bool, String> {
+    let mut args = target_base_args(&target);
+    args.push(OsString::from("exec"));
+    args.push(OsString::from(&target.pod));
+    if let Some(container) = target
+        .container
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        args.push(OsString::from("-c"));
+        args.push(OsString::from(container));
+    }
+    args.push(OsString::from("--"));
+    args.push(OsString::from("tar"));
+    args.push(OsString::from("--version"));
+
+    let output = run_kubectl_output_with_timeout(args, kubectl_timeout())?;
+    Ok(output.success)
+}
+
 fn parse_namespace_summary_line(line: &str) -> Option<NamespaceEntry> {
     let mut columns = line.split_whitespace();
     let name = columns.next()?.to_string();
@@ -660,6 +681,15 @@ fn run_kubectl(args: Vec<OsString>) -> Result<String, String> {
 
 fn run_kubectl_with_timeout(args: Vec<OsString>, timeout: Duration) -> Result<String, String> {
     run_kubectl_with_timeout_and_operation(args, timeout, None)
+}
+
+fn run_kubectl_output_with_timeout(
+    args: Vec<OsString>,
+    timeout: Duration,
+) -> Result<ProcessOutput, String> {
+    let program = kubectl_program();
+    let args = kubectl_args_with_request_timeout(args);
+    run_logged_kubectl_program(&program, &args, timeout, None)
 }
 
 fn run_kubectl_with_timeout_and_operation(
@@ -1186,6 +1216,7 @@ pub fn run() {
             list_namespaces,
             list_pods,
             list_containers,
+            check_container_tar,
             list_remote_dir,
             list_local_dir,
             join_local_path,
