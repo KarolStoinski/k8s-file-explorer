@@ -241,9 +241,27 @@ button {
   white-space: normal;
 }
 
-.breadcrumbs span {
+.breadcrumb-button {
+  min-height: 19px;
   min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
   overflow-wrap: anywhere;
+}
+
+.breadcrumb-button:hover {
+  color: var(--blue);
+  text-decoration: underline;
+}
+
+.breadcrumb-button:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 .breadcrumbs svg {

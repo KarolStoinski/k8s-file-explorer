@@ -278,6 +278,15 @@ function nextPaint(): Promise<void> {
 
 async function handleClick(event: MouseEvent): Promise<void> {
   const target = event.target as HTMLElement;
+  const breadcrumb = target.closest<HTMLButtonElement>("[data-breadcrumb]");
+  if (breadcrumb) {
+    if (breadcrumb.disabled || state.remote.loading || state.activeKubectlActions > 0) {
+      return;
+    }
+    await openRemoteBreadcrumb(breadcrumb.dataset.breadcrumb ?? "", breadcrumb.dataset.path ?? "");
+    return;
+  }
+
   const action = target.closest<HTMLButtonElement>("[data-action]");
   if (action) {
     if (action.disabled) {
@@ -753,6 +762,58 @@ async function remoteUp(): Promise<void> {
   }
 }
 
+async function openRemoteBreadcrumb(level: string, path: string): Promise<void> {
+  switch (level) {
+    case "root":
+      resetRemoteToRoot();
+      render();
+      return;
+    case "kubeconfig":
+      state.remote.level = "namespaces";
+      state.remote.namespace = null;
+      state.remote.pod = null;
+      state.remote.container = null;
+      state.remote.pods = [];
+      state.remote.containers = [];
+      state.remote.entries = [];
+      state.remote.path = "/";
+      state.remote.selectedIndex = null;
+      render();
+      return;
+    case "namespace":
+      state.remote.level = "pods";
+      state.remote.pod = null;
+      state.remote.container = null;
+      state.remote.containers = [];
+      state.remote.entries = [];
+      state.remote.path = "/";
+      state.remote.selectedIndex = null;
+      render();
+      return;
+    case "pod":
+      if (state.remote.containers.length > 1) {
+        state.remote.level = "containers";
+        state.remote.container = null;
+      } else {
+        state.remote.level = "remote";
+      }
+      state.remote.entries = [];
+      state.remote.path = "/";
+      state.remote.selectedIndex = null;
+      render();
+      if (state.remote.level === "remote") {
+        await loadRemotePath("/");
+      }
+      return;
+    case "container":
+      await loadRemotePath("/");
+      return;
+    case "remote-path":
+      await loadRemotePath(path || "/");
+      return;
+  }
+}
+
 async function downloadSelectedRemote(): Promise<void> {
   const entry = selectedRemoteEntry();
   const target = remoteTarget();
@@ -1193,24 +1254,45 @@ function renderEmptyState(icon: string, message: string, tone = ""): string {
 }
 
 function renderRemoteBreadcrumbs(): string {
-  const crumbs = ["root"];
+  const crumbs: string[] = [
+    renderBreadcrumbButton("root", "root"),
+  ];
   if (state.remote.kubeconfig) {
-    crumbs.push(state.remote.kubeconfig.name);
+    crumbs.push(renderBreadcrumbButton(state.remote.kubeconfig.name, "kubeconfig"));
   }
   if (state.remote.namespace) {
-    crumbs.push(state.remote.namespace.name);
+    crumbs.push(renderBreadcrumbButton(state.remote.namespace.name, "namespace"));
   }
   if (state.remote.pod) {
-    crumbs.push(state.remote.pod.name);
+    crumbs.push(renderBreadcrumbButton(state.remote.pod.name, "pod"));
   }
   if (state.remote.container) {
-    crumbs.push(state.remote.container.name);
+    crumbs.push(renderBreadcrumbButton(state.remote.container.name, "container"));
   }
   if (state.remote.level === "remote") {
-    crumbs.push(state.remote.path);
+    crumbs.push(...renderRemotePathBreadcrumbs(state.remote.path));
   }
 
-  return crumbs.map((crumb) => `<span>${escapeHtml(crumb)}</span>`).join("<i data-lucide=\"chevron-right\"></i>");
+  return crumbs.join("<i data-lucide=\"chevron-right\"></i>");
+}
+
+function renderRemotePathBreadcrumbs(path: string): string[] {
+  const parts = path.split("/").filter(Boolean);
+  const crumbs = [renderBreadcrumbButton("/", "remote-path", "/")];
+  let current = "";
+  for (const part of parts) {
+    current = `${current}/${part}`;
+    crumbs.push(renderBreadcrumbButton(part, "remote-path", current));
+  }
+  return crumbs;
+}
+
+function renderBreadcrumbButton(label: string, level: string, path = ""): string {
+  return `
+    <button class="breadcrumb-button" type="button" data-breadcrumb="${escapeAttr(level)}" data-path="${escapeAttr(path)}">
+      ${escapeHtml(label)}
+    </button>
+  `;
 }
 
 function renderTransfers(): string {
