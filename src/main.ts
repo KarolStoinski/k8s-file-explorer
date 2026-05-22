@@ -818,7 +818,7 @@ function render(): void {
           </button>
         </div>
       </header>
-      ${state.bootError ? `<div class="banner error">${escapeHtml(state.bootError)}</div>` : ""}
+      ${state.bootError ? `<div class="banner error">${escapeHtml(state.bootError)}</div>` : `<div class="banner-placeholder" aria-hidden="true"></div>`}
       <main class="workspace">
         ${renderRemotePanel()}
         ${renderLocalPanel()}
