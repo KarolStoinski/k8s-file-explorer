@@ -262,7 +262,13 @@ fn get_kubectl_logs() -> Vec<KubectlLogEntry> {
 }
 
 #[tauri::command]
-fn list_namespaces(kubeconfig: String) -> Result<Vec<NamespaceEntry>, String> {
+async fn list_namespaces(kubeconfig: String) -> Result<Vec<NamespaceEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || list_namespaces_blocking(kubeconfig))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn list_namespaces_blocking(kubeconfig: String) -> Result<Vec<NamespaceEntry>, String> {
     let args = vec![
         OsString::from("--kubeconfig"),
         OsString::from(kubeconfig),
@@ -284,7 +290,13 @@ fn list_namespaces(kubeconfig: String) -> Result<Vec<NamespaceEntry>, String> {
 }
 
 #[tauri::command]
-fn list_pods(kubeconfig: String, namespace: String) -> Result<Vec<PodEntry>, String> {
+async fn list_pods(kubeconfig: String, namespace: String) -> Result<Vec<PodEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || list_pods_blocking(kubeconfig, namespace))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn list_pods_blocking(kubeconfig: String, namespace: String) -> Result<Vec<PodEntry>, String> {
     let args = vec![
         OsString::from("--kubeconfig"),
         OsString::from(kubeconfig),
@@ -308,7 +320,19 @@ fn list_pods(kubeconfig: String, namespace: String) -> Result<Vec<PodEntry>, Str
 }
 
 #[tauri::command]
-fn list_containers(
+async fn list_containers(
+    kubeconfig: String,
+    namespace: String,
+    pod: String,
+) -> Result<Vec<ContainerEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        list_containers_blocking(kubeconfig, namespace, pod)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+fn list_containers_blocking(
     kubeconfig: String,
     namespace: String,
     pod: String,
@@ -333,7 +357,13 @@ fn list_containers(
 }
 
 #[tauri::command]
-fn check_container_tar(target: RemoteTarget) -> Result<bool, String> {
+async fn check_container_tar(target: RemoteTarget) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || check_container_tar_blocking(target))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn check_container_tar_blocking(target: RemoteTarget) -> Result<bool, String> {
     let mut args = target_base_args(&target);
     args.push(OsString::from("exec"));
     args.push(OsString::from(&target.pod));
@@ -442,7 +472,19 @@ fn none_marker_to_option(value: &str) -> Option<String> {
 }
 
 #[tauri::command]
-fn list_remote_dir(target: RemoteTarget, path: String) -> Result<Vec<RemoteFileEntry>, String> {
+async fn list_remote_dir(
+    target: RemoteTarget,
+    path: String,
+) -> Result<Vec<RemoteFileEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || list_remote_dir_blocking(target, path))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn list_remote_dir_blocking(
+    target: RemoteTarget,
+    path: String,
+) -> Result<Vec<RemoteFileEntry>, String> {
     let mut args = target_base_args(&target);
     args.push(OsString::from("exec"));
     args.push(OsString::from(&target.pod));
@@ -476,7 +518,13 @@ fn list_remote_dir(target: RemoteTarget, path: String) -> Result<Vec<RemoteFileE
 }
 
 #[tauri::command]
-fn list_local_dir(path: Option<String>) -> Result<LocalDirectory, String> {
+async fn list_local_dir(path: Option<String>) -> Result<LocalDirectory, String> {
+    tauri::async_runtime::spawn_blocking(move || list_local_dir_blocking(path))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn list_local_dir_blocking(path: Option<String>) -> Result<LocalDirectory, String> {
     let directory = match path {
         Some(path) if !path.trim().is_empty() => PathBuf::from(path),
         _ => home_dir()?,

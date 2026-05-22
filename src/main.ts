@@ -141,6 +141,13 @@ interface ContextMenuState {
   y: number;
 }
 
+type PrefetchTarget =
+  | { kind: "namespaces"; kubeconfig: KubeconfigEntry }
+  | { kind: "pods"; kubeconfig: KubeconfigEntry; namespace: NamespaceEntry }
+  | { kind: "containers"; kubeconfig: KubeconfigEntry; namespace: NamespaceEntry; pod: PodEntry }
+  | { kind: "remote-dir"; target: RemoteTarget; path: string }
+  | { kind: "local-dir"; path: string };
+
 interface AppState {
   kubectl: ToolStatus | null;
   remote: RemoteState;
@@ -201,6 +208,16 @@ const state: AppState = {
 };
 
 let activeTransferResize: { index: number; startX: number; startWidth: number } | null = null;
+let hoverPrefetchTimer: number | null = null;
+let hoverPrefetchKey: string | null = null;
+
+const PREFETCH_DELAY_MS = 450;
+const namespaceCache = new Map<string, NamespaceEntry[]>();
+const podCache = new Map<string, PodEntry[]>();
+const containerCache = new Map<string, ContainerEntry[]>();
+const remoteDirCache = new Map<string, RemoteFileEntry[]>();
+const localDirCache = new Map<string, LocalDirectory>();
+const inflightPrefetches = new Map<string, Promise<void>>();
 
 app.addEventListener("click", (event) => {
   void handleClick(event);
@@ -208,6 +225,14 @@ app.addEventListener("click", (event) => {
 
 app.addEventListener("contextmenu", (event) => {
   handleContextMenu(event);
+});
+
+app.addEventListener("mouseover", (event) => {
+  scheduleHoverPrefetch(event);
+});
+
+app.addEventListener("mouseleave", () => {
+  cancelHoverPrefetch();
 });
 
 app.addEventListener("dblclick", (event) => {
@@ -437,6 +462,192 @@ function updateTransferColumnStyles(): void {
   });
 }
 
+function scheduleHoverPrefetch(event: MouseEvent): void {
+  const row = (event.target as HTMLElement).closest<HTMLElement>("[data-panel][data-index]");
+  if (!row) {
+    cancelHoverPrefetch();
+    return;
+  }
+  const target = prefetchTargetForRow(row);
+  if (!target) {
+    cancelHoverPrefetch();
+    return;
+  }
+  const key = prefetchKey(target);
+  if (hoverPrefetchKey === key || prefetchCacheHas(target) || inflightPrefetches.has(key)) {
+    return;
+  }
+
+  cancelHoverPrefetch();
+  hoverPrefetchKey = key;
+  hoverPrefetchTimer = window.setTimeout(() => {
+    hoverPrefetchTimer = null;
+    void runPrefetch(target);
+  }, PREFETCH_DELAY_MS);
+}
+
+function cancelHoverPrefetch(): void {
+  if (hoverPrefetchTimer !== null) {
+    window.clearTimeout(hoverPrefetchTimer);
+  }
+  hoverPrefetchTimer = null;
+  hoverPrefetchKey = null;
+}
+
+function prefetchTargetForRow(row: HTMLElement): PrefetchTarget | null {
+  const index = Number(row.dataset.index);
+  if (!Number.isFinite(index)) {
+    return null;
+  }
+  if (row.dataset.panel === "local") {
+    const entry = state.local.entries[index];
+    return entry?.kind === "directory" ? { kind: "local-dir", path: entry.path } : null;
+  }
+  if (row.dataset.panel !== "remote") {
+    return null;
+  }
+
+  switch (state.remote.level) {
+    case "kubeconfigs": {
+      const kubeconfig = state.remote.kubeconfigs[index];
+      return kubeconfig?.isValid ? { kind: "namespaces", kubeconfig } : null;
+    }
+    case "namespaces": {
+      const kubeconfig = state.remote.kubeconfig;
+      const namespace = state.remote.namespaces[index];
+      return kubeconfig && namespace ? { kind: "pods", kubeconfig, namespace } : null;
+    }
+    case "pods": {
+      const kubeconfig = state.remote.kubeconfig;
+      const namespace = state.remote.namespace;
+      const pod = state.remote.pods[index];
+      return kubeconfig && namespace && pod ? { kind: "containers", kubeconfig, namespace, pod } : null;
+    }
+    case "containers": {
+      const container = state.remote.containers[index];
+      const target = remoteTargetForContainer(container);
+      return target ? { kind: "remote-dir", target, path: "/" } : null;
+    }
+    case "remote": {
+      const entry = state.remote.entries[index];
+      const target = remoteTarget();
+      return entry?.kind === "directory" && target ? { kind: "remote-dir", target, path: entry.path } : null;
+    }
+  }
+}
+
+function remoteTargetForContainer(container: ContainerEntry | undefined): RemoteTarget | null {
+  const kubeconfig = state.remote.kubeconfig;
+  const namespace = state.remote.namespace;
+  const pod = state.remote.pod;
+  if (!kubeconfig || !namespace || !pod || !container) {
+    return null;
+  }
+  return {
+    kubeconfig: kubeconfig.path,
+    namespace: namespace.name,
+    pod: pod.name,
+    container: container.name,
+  };
+}
+
+async function runPrefetch(target: PrefetchTarget): Promise<void> {
+  const key = prefetchKey(target);
+  if (prefetchCacheHas(target) || inflightPrefetches.has(key)) {
+    return;
+  }
+  const promise = runPrefetchRequest(target, key);
+  inflightPrefetches.set(key, promise);
+  await promise;
+}
+
+async function runPrefetchRequest(target: PrefetchTarget, key: string): Promise<void> {
+  try {
+    switch (target.kind) {
+      case "namespaces":
+        namespaceCache.set(key, await invoke<NamespaceEntry[]>("list_namespaces", { kubeconfig: target.kubeconfig.path }));
+        break;
+      case "pods":
+        podCache.set(key, await invoke<PodEntry[]>("list_pods", {
+          kubeconfig: target.kubeconfig.path,
+          namespace: target.namespace.name,
+        }));
+        break;
+      case "containers":
+        const containers = await invoke<ContainerEntry[]>("list_containers", {
+          kubeconfig: target.kubeconfig.path,
+          namespace: target.namespace.name,
+          pod: target.pod.name,
+        });
+        containerCache.set(key, containers);
+        if (containers.length === 1) {
+          const remoteTarget = {
+            kubeconfig: target.kubeconfig.path,
+            namespace: target.namespace.name,
+            pod: target.pod.name,
+            container: containers[0].name,
+          };
+          const rootTarget: PrefetchTarget = { kind: "remote-dir", target: remoteTarget, path: "/" };
+          if (!prefetchCacheHas(rootTarget)) {
+            await runPrefetch(rootTarget);
+          }
+        }
+        break;
+      case "remote-dir":
+        remoteDirCache.set(key, await invoke<RemoteFileEntry[]>("list_remote_dir", {
+          target: target.target,
+          path: target.path,
+        }));
+        break;
+      case "local-dir":
+        localDirCache.set(key, await invoke<LocalDirectory>("list_local_dir", { path: target.path }));
+        break;
+    }
+  } catch {
+    // Prefetch is opportunistic. Navigation will surface errors if the user opens the item.
+  } finally {
+    inflightPrefetches.delete(key);
+  }
+}
+
+async function waitForPrefetch(key: string): Promise<void> {
+  const prefetch = inflightPrefetches.get(key);
+  if (prefetch) {
+    await prefetch;
+  }
+}
+
+function prefetchCacheHas(target: PrefetchTarget): boolean {
+  const key = prefetchKey(target);
+  switch (target.kind) {
+    case "namespaces":
+      return namespaceCache.has(key);
+    case "pods":
+      return podCache.has(key);
+    case "containers":
+      return containerCache.has(key);
+    case "remote-dir":
+      return remoteDirCache.has(key);
+    case "local-dir":
+      return localDirCache.has(key);
+  }
+}
+
+function prefetchKey(target: PrefetchTarget): string {
+  switch (target.kind) {
+    case "namespaces":
+      return `namespaces:${target.kubeconfig.path}`;
+    case "pods":
+      return `pods:${target.kubeconfig.path}:${target.namespace.name}`;
+    case "containers":
+      return `containers:${target.kubeconfig.path}:${target.namespace.name}:${target.pod.name}`;
+    case "remote-dir":
+      return `remote-dir:${target.target.kubeconfig}:${target.target.namespace}:${target.target.pod}:${target.target.container ?? ""}:${target.path}`;
+    case "local-dir":
+      return `local-dir:${target.path}`;
+  }
+}
+
 function renderContextMenuInPlace(): void {
   app.querySelector<HTMLElement>(".context-menu")?.remove();
   const menu = renderContextMenu();
@@ -503,7 +714,7 @@ async function runAction(action: string): Promise<void> {
       await refreshRemote();
       break;
     case "refresh-local":
-      await loadLocalDir(state.local.path || null, true);
+      await loadLocalDir(state.local.path || null, true, false);
       break;
     case "remote-up":
       await remoteUp();
@@ -584,6 +795,8 @@ async function openKubeconfig(index: number): Promise<void> {
   if (!kubeconfig.isValid && !window.confirm(`${kubeconfig.name} może nie być kubeconfigiem. Spróbować mimo to?`)) {
     return;
   }
+  const cacheKey = prefetchKey({ kind: "namespaces", kubeconfig });
+  const cachedNamespaces = namespaceCache.get(cacheKey);
 
   state.remote = {
     ...state.remote,
@@ -593,22 +806,29 @@ async function openKubeconfig(index: number): Promise<void> {
     pod: null,
     container: null,
     tarAvailable: null,
-    namespaces: [],
+    namespaces: cachedNamespaces ?? [],
     pods: [],
     containers: [],
     entries: [],
     path: "/",
     selectedIndex: null,
     selectedIndices: [],
-    loading: true,
+    loading: !cachedNamespaces,
     error: null,
   };
   render();
+  if (cachedNamespaces) {
+    return;
+  }
 
   try {
-    state.remote.namespaces = await invokeKubectl<NamespaceEntry[]>("list_namespaces", {
-      kubeconfig: kubeconfig.path,
-    });
+    await waitForPrefetch(cacheKey);
+    state.remote.namespaces =
+      namespaceCache.get(cacheKey) ??
+      (await invokeKubectl<NamespaceEntry[]>("list_namespaces", {
+        kubeconfig: kubeconfig.path,
+      }));
+    namespaceCache.set(cacheKey, state.remote.namespaces);
   } catch (error) {
     state.remote.error = formatError(error);
   } finally {
@@ -623,6 +843,8 @@ async function openNamespace(index: number): Promise<void> {
   if (!namespace || !kubeconfig) {
     return;
   }
+  const cacheKey = prefetchKey({ kind: "pods", kubeconfig, namespace });
+  const cachedPods = podCache.get(cacheKey);
 
   state.remote = {
     ...state.remote,
@@ -631,21 +853,28 @@ async function openNamespace(index: number): Promise<void> {
     pod: null,
     container: null,
     tarAvailable: null,
-    pods: [],
+    pods: cachedPods ?? [],
     containers: [],
     entries: [],
     selectedIndex: null,
     selectedIndices: [],
-    loading: true,
+    loading: !cachedPods,
     error: null,
   };
   render();
+  if (cachedPods) {
+    return;
+  }
 
   try {
-    state.remote.pods = await invokeKubectl<PodEntry[]>("list_pods", {
-      kubeconfig: kubeconfig.path,
-      namespace: namespace.name,
-    });
+    await waitForPrefetch(cacheKey);
+    state.remote.pods =
+      podCache.get(cacheKey) ??
+      (await invokeKubectl<PodEntry[]>("list_pods", {
+        kubeconfig: kubeconfig.path,
+        namespace: namespace.name,
+      }));
+    podCache.set(cacheKey, state.remote.pods);
   } catch (error) {
     state.remote.error = formatError(error);
   } finally {
@@ -661,26 +890,32 @@ async function openPod(index: number): Promise<void> {
   if (!pod || !kubeconfig || !namespace) {
     return;
   }
+  const cacheKey = prefetchKey({ kind: "containers", kubeconfig, namespace, pod });
+  const cachedContainers = containerCache.get(cacheKey);
 
   state.remote = {
     ...state.remote,
     pod,
     container: null,
-    containers: [],
+    containers: cachedContainers ?? [],
     entries: [],
     selectedIndex: null,
     selectedIndices: [],
-    loading: true,
+    loading: !cachedContainers,
     error: null,
   };
   render();
 
   try {
-    const containers = await invokeKubectl<ContainerEntry[]>("list_containers", {
-      kubeconfig: kubeconfig.path,
-      namespace: namespace.name,
-      pod: pod.name,
-    });
+    await waitForPrefetch(cacheKey);
+    const containers =
+      containerCache.get(cacheKey) ??
+      (await invokeKubectl<ContainerEntry[]>("list_containers", {
+        kubeconfig: kubeconfig.path,
+        namespace: namespace.name,
+        pod: pod.name,
+      }));
+    containerCache.set(cacheKey, containers);
 
     state.remote.containers = containers;
     if (containers.length > 1) {
@@ -774,9 +1009,25 @@ async function openRemoteEntry(index: number): Promise<void> {
   }
 }
 
-async function loadRemotePath(path: string): Promise<void> {
+async function loadRemotePath(path: string, useCache = true): Promise<void> {
   const target = remoteTarget();
   if (!target) {
+    return;
+  }
+  const cacheKey = prefetchKey({ kind: "remote-dir", target, path });
+  const cachedEntries = useCache ? remoteDirCache.get(cacheKey) : undefined;
+  if (cachedEntries) {
+    state.remote = {
+      ...state.remote,
+      level: "remote",
+      path,
+      entries: cachedEntries,
+      selectedIndex: null,
+      selectedIndices: [],
+      loading: false,
+      error: null,
+    };
+    render();
     return;
   }
 
@@ -793,10 +1044,14 @@ async function loadRemotePath(path: string): Promise<void> {
   render();
 
   try {
-    state.remote.entries = await invokeKubectl<RemoteFileEntry[]>("list_remote_dir", {
-      target,
-      path,
-    });
+    await waitForPrefetch(cacheKey);
+    state.remote.entries =
+      remoteDirCache.get(cacheKey) ??
+      (await invokeKubectl<RemoteFileEntry[]>("list_remote_dir", {
+        target,
+        path,
+      }));
+    remoteDirCache.set(cacheKey, state.remote.entries);
   } catch (error) {
     state.remote.error = formatError(error);
   } finally {
@@ -805,7 +1060,21 @@ async function loadRemotePath(path: string): Promise<void> {
   }
 }
 
-async function loadLocalDir(path: string | null, showLoading: boolean): Promise<void> {
+async function loadLocalDir(path: string | null, showLoading: boolean, useCache = true): Promise<void> {
+  const cacheKey = path ? prefetchKey({ kind: "local-dir", path }) : null;
+  const cachedDirectory = cacheKey && useCache ? localDirCache.get(cacheKey) : undefined;
+  if (cachedDirectory) {
+    state.local.path = cachedDirectory.path;
+    state.local.parent = cachedDirectory.parent;
+    state.local.entries = cachedDirectory.entries;
+    state.local.selectedIndex = null;
+    state.local.selectedIndices = [];
+    state.local.error = null;
+    state.local.loading = false;
+    render();
+    return;
+  }
+
   if (showLoading) {
     state.local.loading = true;
     state.local.error = null;
@@ -813,7 +1082,15 @@ async function loadLocalDir(path: string | null, showLoading: boolean): Promise<
   }
 
   try {
-    const directory = await invoke<LocalDirectory>("list_local_dir", { path });
+    if (cacheKey) {
+      await waitForPrefetch(cacheKey);
+    }
+    const directory =
+      (cacheKey ? localDirCache.get(cacheKey) : undefined) ??
+      (await invoke<LocalDirectory>("list_local_dir", { path }));
+    if (cacheKey) {
+      localDirCache.set(cacheKey, directory);
+    }
     state.local.path = directory.path;
     state.local.parent = directory.parent;
     state.local.entries = directory.entries;
@@ -866,21 +1143,33 @@ async function refreshRemote(): Promise<void> {
       break;
     case "namespaces":
       if (state.remote.kubeconfig) {
+        namespaceCache.delete(prefetchKey({ kind: "namespaces", kubeconfig: state.remote.kubeconfig }));
         await openKubeconfig(state.remote.kubeconfigs.indexOf(state.remote.kubeconfig));
       }
       break;
     case "pods":
-      if (state.remote.namespace) {
+      if (state.remote.kubeconfig && state.remote.namespace) {
+        podCache.delete(prefetchKey({
+          kind: "pods",
+          kubeconfig: state.remote.kubeconfig,
+          namespace: state.remote.namespace,
+        }));
         await openNamespace(state.remote.namespaces.indexOf(state.remote.namespace));
       }
       break;
     case "containers":
-      if (state.remote.pod) {
+      if (state.remote.kubeconfig && state.remote.namespace && state.remote.pod) {
+        containerCache.delete(prefetchKey({
+          kind: "containers",
+          kubeconfig: state.remote.kubeconfig,
+          namespace: state.remote.namespace,
+          pod: state.remote.pod,
+        }));
         await openPod(state.remote.pods.indexOf(state.remote.pod));
       }
       break;
     case "remote":
-      await loadRemotePath(state.remote.path);
+      await loadRemotePath(state.remote.path, false);
       break;
   }
 }
@@ -1029,7 +1318,7 @@ async function runDownloadTransfer(
       operationId: transferId,
     });
     updateTransfer(transferId, "success", destination, null);
-    await loadLocalDir(state.local.path, true);
+    await loadLocalDir(state.local.path, true, false);
   } catch (error) {
     updateTransfer(transferId, "failed", destination, formatError(error));
   }
@@ -1067,7 +1356,7 @@ async function runUploadTransfer(
       operationId: transferId,
     });
     updateTransfer(transferId, "success", destination, null);
-    await loadRemotePath(state.remote.path);
+    await loadRemotePath(state.remote.path, false);
   } catch (error) {
     updateTransfer(transferId, "failed", destination, formatError(error));
   }
