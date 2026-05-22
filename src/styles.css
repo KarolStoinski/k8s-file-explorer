@@ -190,13 +190,23 @@ button {
 
 .panel-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   min-height: 68px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   background: #fbfcfd;
+}
+
+.panel-header > div:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.panel-actions {
+  flex: 0 0 auto;
+  padding-top: 1px;
 }
 
 .panel-header h2 {
@@ -208,17 +218,18 @@ button {
 .breadcrumbs {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   max-width: 100%;
   min-height: 22px;
-  overflow: hidden;
   color: var(--text-muted);
   font-size: 12px;
-  white-space: nowrap;
+  line-height: 17px;
+  white-space: normal;
 }
 
 .breadcrumbs span {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .breadcrumbs svg {
@@ -229,7 +240,7 @@ button {
 }
 
 .path-input {
-  width: min(48vw, 620px);
+  width: 100%;
   max-width: 100%;
   height: 28px;
   padding: 0 8px;

@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    collections::HashMap,
     env,
     ffi::{OsStr, OsString},
     fs,
@@ -268,27 +267,15 @@ fn list_namespaces(kubeconfig: String) -> Result<Vec<NamespaceEntry>, String> {
         OsString::from("get"),
         OsString::from("namespaces"),
         OsString::from("-o"),
-        OsString::from("json"),
+        OsString::from("custom-columns=NAME:.metadata.name,STATUS:.status.phase"),
+        OsString::from("--no-headers"),
     ];
 
     let stdout = run_kubectl(args)?;
-    let value: Value = serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
-    let mut namespaces = value
-        .get("items")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| {
-                    let name = json_string(item, "/metadata/name")?;
-                    Some(NamespaceEntry {
-                        name,
-                        status: json_string(item, "/status/phase"),
-                    })
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let mut namespaces = stdout
+        .lines()
+        .filter_map(parse_namespace_summary_line)
+        .collect::<Vec<_>>();
 
     namespaces.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Ok(namespaces)
@@ -304,67 +291,15 @@ fn list_pods(kubeconfig: String, namespace: String) -> Result<Vec<PodEntry>, Str
         OsString::from("get"),
         OsString::from("pods"),
         OsString::from("-o"),
-        OsString::from("json"),
+        OsString::from("custom-columns=NAME:.metadata.name,PHASE:.status.phase,READY:.status.containerStatuses[*].ready,RESTARTS:.status.containerStatuses[*].restartCount,CONTAINERS:.spec.containers[*].name"),
+        OsString::from("--no-headers"),
     ];
 
     let stdout = run_kubectl(args)?;
-    let value: Value = serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
-    let mut pods = value
-        .get("items")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| {
-                    let name = json_string(item, "/metadata/name")?;
-                    let containers: Vec<String> = item
-                        .pointer("/spec/containers")
-                        .and_then(Value::as_array)
-                        .map(|items| container_names(items))
-                        .unwrap_or_default();
-                    let total_containers = containers.len();
-                    let statuses = item
-                        .pointer("/status/containerStatuses")
-                        .and_then(Value::as_array);
-                    let ready_count = statuses
-                        .map(|values| {
-                            values
-                                .iter()
-                                .filter(|status| {
-                                    status
-                                        .get("ready")
-                                        .and_then(Value::as_bool)
-                                        .unwrap_or(false)
-                                })
-                                .count()
-                        })
-                        .unwrap_or(0);
-                    let restart_count = statuses
-                        .map(|values| {
-                            values
-                                .iter()
-                                .map(|status| {
-                                    status
-                                        .get("restartCount")
-                                        .and_then(Value::as_u64)
-                                        .unwrap_or(0)
-                                })
-                                .sum()
-                        })
-                        .unwrap_or(0);
-
-                    Some(PodEntry {
-                        name,
-                        namespace: namespace.clone(),
-                        phase: json_string(item, "/status/phase"),
-                        ready: format!("{ready_count}/{total_containers}"),
-                        restart_count,
-                        containers,
-                    })
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let mut pods = stdout
+        .lines()
+        .filter_map(|line| parse_pod_summary_line(line, &namespace))
+        .collect::<Vec<_>>();
 
     pods.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Ok(pods)
@@ -385,51 +320,102 @@ fn list_containers(
         OsString::from("pod"),
         OsString::from(pod),
         OsString::from("-o"),
-        OsString::from("json"),
+        OsString::from("custom-columns=NAME:.spec.containers[*].name,IMAGE:.spec.containers[*].image,READY:.status.containerStatuses[*].ready"),
+        OsString::from("--no-headers"),
     ];
 
     let stdout = run_kubectl(args)?;
-    let value: Value = serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
-    let mut readiness = HashMap::new();
-    if let Some(statuses) = value
-        .pointer("/status/containerStatuses")
-        .and_then(Value::as_array)
-    {
-        for status in statuses {
-            if let Some(name) = status.get("name").and_then(Value::as_str) {
-                readiness.insert(
-                    name.to_string(),
-                    status
-                        .get("ready")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                );
-            }
-        }
-    }
-
-    let containers = value
-        .pointer("/spec/containers")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| {
-                    let name = item.get("name").and_then(Value::as_str)?.to_string();
-                    Some(ContainerEntry {
-                        ready: readiness.get(&name).copied(),
-                        image: item
-                            .get("image")
-                            .and_then(Value::as_str)
-                            .map(ToOwned::to_owned),
-                        name,
-                    })
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let containers = parse_container_summary(&stdout);
 
     Ok(containers)
+}
+
+fn parse_namespace_summary_line(line: &str) -> Option<NamespaceEntry> {
+    let mut columns = line.split_whitespace();
+    let name = columns.next()?.to_string();
+    let status = columns.next().and_then(none_marker_to_option);
+    Some(NamespaceEntry { name, status })
+}
+
+fn parse_container_summary(stdout: &str) -> Vec<ContainerEntry> {
+    stdout
+        .lines()
+        .next()
+        .map(parse_container_summary_line)
+        .unwrap_or_default()
+}
+
+fn parse_container_summary_line(line: &str) -> Vec<ContainerEntry> {
+    let columns = line.split_whitespace().collect::<Vec<_>>();
+    if columns.len() < 3 {
+        return Vec::new();
+    }
+
+    let names = split_kubectl_list(columns[0]);
+    let images = split_kubectl_list(columns[1]);
+    let readiness = split_kubectl_list(columns[2]);
+
+    names
+        .into_iter()
+        .enumerate()
+        .map(|(index, name)| ContainerEntry {
+            name,
+            image: images.get(index).cloned(),
+            ready: readiness
+                .get(index)
+                .map(|value| value.eq_ignore_ascii_case("true")),
+        })
+        .collect()
+}
+
+fn parse_pod_summary_line(line: &str, namespace: &str) -> Option<PodEntry> {
+    let columns = line.split_whitespace().collect::<Vec<_>>();
+    if columns.len() < 5 {
+        return None;
+    }
+
+    let name = columns[0].to_string();
+    let phase = none_marker_to_option(columns[1]);
+    let ready_values = split_kubectl_list(columns[2]);
+    let restart_values = split_kubectl_list(columns[3]);
+    let containers = split_kubectl_list(columns[4]);
+    let ready_count = ready_values
+        .iter()
+        .filter(|value| value.eq_ignore_ascii_case("true"))
+        .count();
+    let total_containers = containers.len().max(ready_values.len());
+    let restart_count = restart_values
+        .iter()
+        .filter_map(|value| value.parse::<u64>().ok())
+        .sum();
+
+    Some(PodEntry {
+        name,
+        namespace: namespace.to_string(),
+        phase,
+        ready: format!("{ready_count}/{total_containers}"),
+        restart_count,
+        containers,
+    })
+}
+
+fn split_kubectl_list(value: &str) -> Vec<String> {
+    if value == "<none>" || value.is_empty() {
+        return Vec::new();
+    }
+    value
+        .split(',')
+        .filter(|item| !item.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn none_marker_to_option(value: &str) -> Option<String> {
+    if value == "<none>" {
+        None
+    } else {
+        Some(value.to_string())
+    }
 }
 
 #[tauri::command]
@@ -998,24 +984,6 @@ fn kind_order(kind: &EntryKind) -> u8 {
         EntryKind::File => 2,
         EntryKind::Unknown => 3,
     }
-}
-
-fn container_names(items: &[Value]) -> Vec<String> {
-    items
-        .iter()
-        .filter_map(|item| {
-            item.get("name")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-        })
-        .collect()
-}
-
-fn json_string(value: &Value, pointer: &str) -> Option<String> {
-    value
-        .pointer(pointer)
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
 }
 
 fn home_dir() -> Result<PathBuf, String> {
