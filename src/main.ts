@@ -730,12 +730,14 @@ async function enterRemoteContainerRoot(): Promise<void> {
     error: null,
   };
   render();
+  await loadRemotePath("/");
+
   try {
     state.remote.tarAvailable = await invokeKubectl<boolean>("check_container_tar", { target });
   } catch {
     state.remote.tarAvailable = false;
   }
-  await loadRemotePath("/");
+  render();
 }
 
 async function openRemoteEntry(index: number): Promise<void> {
