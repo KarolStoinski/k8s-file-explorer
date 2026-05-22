@@ -436,6 +436,33 @@ button {
   gap: 6px;
 }
 
+.transfer-info {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.transfer-info .truncate {
+  flex: 1 1 auto;
+}
+
+.cancel-transfer-button {
+  flex: 0 0 auto;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid #d28a83;
+  border-radius: 6px;
+  background: #fff1f0;
+  color: var(--red);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.cancel-transfer-button:hover {
+  background: #ffe4e1;
+}
+
 .transfer-row.success .transfer-status {
   color: var(--green);
 }

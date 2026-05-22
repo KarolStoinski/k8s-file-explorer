@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
+    collections::HashMap,
     env,
     ffi::{OsStr, OsString},
     fs,
@@ -21,6 +22,7 @@ const KUBECTL_TIMEOUT_ENV: &str = "K8S_FILE_EXPLORER_KUBECTL_TIMEOUT_SECONDS";
 const MAX_KUBECTL_LOGS: usize = 200;
 
 static KUBECTL_LOGS: OnceLock<Mutex<Vec<KubectlLogEntry>>> = OnceLock::new();
+static ACTIVE_KUBECTL_OPERATIONS: OnceLock<Mutex<HashMap<u64, u32>>> = OnceLock::new();
 static NEXT_KUBECTL_LOG_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Serialize)]
@@ -162,7 +164,7 @@ fn check_kubectl() -> ToolStatus {
     let args = kubectl_args_with_request_timeout(os_args(["version", "--client", "-o", "json"]));
     let program = kubectl_program();
 
-    match run_logged_kubectl_program(&program, &args, kubectl_timeout()) {
+    match run_logged_kubectl_program(&program, &args, kubectl_timeout(), None) {
         Ok(output) if output.success => {
             let version = serde_json::from_str::<Value>(&output.stdout)
                 .ok()
@@ -519,6 +521,7 @@ fn copy_remote_to_local(
     target: RemoteTarget,
     remote_path: String,
     local_path: String,
+    operation_id: Option<u64>,
 ) -> Result<TransferResult, String> {
     let mut args = target_base_args(&target);
     args.push(OsString::from("cp"));
@@ -533,7 +536,7 @@ fn copy_remote_to_local(
     args.push(OsString::from(format!("{}:{remote_path}", target.pod)));
     args.push(OsString::from(&local_path));
 
-    run_kubectl_with_timeout(args, COPY_TIMEOUT)?;
+    run_kubectl_with_timeout_and_operation(args, COPY_TIMEOUT, operation_id)?;
     Ok(TransferResult {
         source: remote_path,
         destination: local_path,
@@ -546,6 +549,7 @@ fn copy_local_to_remote(
     target: RemoteTarget,
     local_path: String,
     remote_path: String,
+    operation_id: Option<u64>,
 ) -> Result<TransferResult, String> {
     let mut args = target_base_args(&target);
     args.push(OsString::from("cp"));
@@ -560,7 +564,7 @@ fn copy_local_to_remote(
     args.push(OsString::from(&local_path));
     args.push(OsString::from(format!("{}:{remote_path}", target.pod)));
 
-    run_kubectl_with_timeout(args, COPY_TIMEOUT)?;
+    run_kubectl_with_timeout_and_operation(args, COPY_TIMEOUT, operation_id)?;
     Ok(TransferResult {
         source: local_path,
         destination: remote_path,
@@ -572,6 +576,7 @@ fn copy_local_to_remote(
 fn download_remote_to_temp(
     target: RemoteTarget,
     remote_path: String,
+    operation_id: Option<u64>,
 ) -> Result<TempDownloadResult, String> {
     let temp_dir = std::env::temp_dir().join("k8s-file-explorer");
     fs::create_dir_all(&temp_dir).map_err(|error| error.to_string())?;
@@ -586,10 +591,24 @@ fn download_remote_to_temp(
     let local_path = temp_dir.join(format!("{millis}-{}", sanitize_file_name(&file_name)));
     let local_path_string = path_to_string(&local_path);
 
-    copy_remote_to_local(target, remote_path, local_path_string.clone())?;
+    copy_remote_to_local(target, remote_path, local_path_string.clone(), operation_id)?;
     Ok(TempDownloadResult {
         local_path: local_path_string,
     })
+}
+
+#[tauri::command]
+fn cancel_kubectl_operation(operation_id: u64) -> Result<(), String> {
+    let Some(process_id) = active_kubectl_operations()
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(&operation_id)
+        .copied()
+    else {
+        return Err("Operacja nie jest już aktywna.".to_string());
+    };
+
+    kill_process(process_id)
 }
 
 #[tauri::command]
@@ -602,9 +621,17 @@ fn run_kubectl(args: Vec<OsString>) -> Result<String, String> {
 }
 
 fn run_kubectl_with_timeout(args: Vec<OsString>, timeout: Duration) -> Result<String, String> {
+    run_kubectl_with_timeout_and_operation(args, timeout, None)
+}
+
+fn run_kubectl_with_timeout_and_operation(
+    args: Vec<OsString>,
+    timeout: Duration,
+    operation_id: Option<u64>,
+) -> Result<String, String> {
     let program = kubectl_program();
     let args = kubectl_args_with_request_timeout(args);
-    let output = run_logged_kubectl_program(&program, &args, timeout)?;
+    let output = run_logged_kubectl_program(&program, &args, timeout, operation_id)?;
     if output.success {
         Ok(output.stdout)
     } else {
@@ -616,6 +643,7 @@ fn run_logged_kubectl_program(
     program: &OsStr,
     args: &[OsString],
     timeout: Duration,
+    operation_id: Option<u64>,
 ) -> Result<ProcessOutput, String> {
     let command = format_command(program, args);
     let id = NEXT_KUBECTL_LOG_ID.fetch_add(1, Ordering::Relaxed);
@@ -634,7 +662,7 @@ fn run_logged_kubectl_program(
         finished: false,
     });
 
-    let output = match run_program(program, args, timeout) {
+    let output = match run_program(program, args, timeout, operation_id) {
         Ok(output) => output,
         Err(error) => {
             update_kubectl_log(KubectlLogEntry {
@@ -694,6 +722,41 @@ fn update_kubectl_log(entry: KubectlLogEntry) {
     }
 }
 
+fn active_kubectl_operations() -> &'static Mutex<HashMap<u64, u32>> {
+    ACTIVE_KUBECTL_OPERATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_kubectl_operation(operation_id: u64, process_id: u32) {
+    if let Ok(mut operations) = active_kubectl_operations().lock() {
+        operations.insert(operation_id, process_id);
+    }
+}
+
+fn unregister_kubectl_operation(operation_id: u64) {
+    if let Ok(mut operations) = active_kubectl_operations().lock() {
+        operations.remove(&operation_id);
+    }
+}
+
+fn kill_process(process_id: u32) -> Result<(), String> {
+    let mut command = if cfg!(windows) {
+        let mut command = Command::new("taskkill");
+        command.args(["/PID", &process_id.to_string(), "/T", "/F"]);
+        command
+    } else {
+        let mut command = Command::new("kill");
+        command.args(["-TERM", &process_id.to_string()]);
+        command
+    };
+
+    let output = command.output().map_err(|error| error.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
 fn now_millis() -> u64 {
     system_time_to_millis(SystemTime::now()).unwrap_or_default()
 }
@@ -740,6 +803,7 @@ fn run_program(
     program: &OsStr,
     args: &[OsString],
     timeout: Duration,
+    operation_id: Option<u64>,
 ) -> Result<ProcessOutput, String> {
     let program_display = program.to_string_lossy();
     let mut child = Command::new(program)
@@ -755,15 +819,23 @@ fn run_program(
                 error.to_string()
             }
         })?;
+    if let Some(operation_id) = operation_id {
+        register_kubectl_operation(operation_id, child.id());
+    }
 
-    let status = match child
-        .wait_timeout(timeout)
-        .map_err(|error| error.to_string())?
-    {
+    let status = match child.wait_timeout(timeout).map_err(|error| {
+        if let Some(operation_id) = operation_id {
+            unregister_kubectl_operation(operation_id);
+        }
+        error.to_string()
+    })? {
         Some(status) => status,
         None => {
             let _ = child.kill();
             let _ = child.wait();
+            if let Some(operation_id) = operation_id {
+                unregister_kubectl_operation(operation_id);
+            }
             return Err(format!(
                 "Przekroczono limit czasu ({timeout_seconds}s) dla programu `{program_display}`. \
                  Możesz zwiększyć limit zmienną środowiskową {KUBECTL_TIMEOUT_ENV}.",
@@ -771,6 +843,9 @@ fn run_program(
             ));
         }
     };
+    if let Some(operation_id) = operation_id {
+        unregister_kubectl_operation(operation_id);
+    }
 
     let stdout = read_pipe(child.stdout.take());
     let stderr = read_pipe(child.stderr.take());
@@ -1066,6 +1141,7 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             check_kubectl,
+            cancel_kubectl_operation,
             get_kubectl_logs,
             scan_kubeconfigs,
             get_home_dir,

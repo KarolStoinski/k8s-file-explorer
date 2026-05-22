@@ -292,6 +292,10 @@ async function handleClick(event: MouseEvent): Promise<void> {
     if (action.disabled) {
       return;
     }
+    if (action.dataset.action === "cancel-transfer") {
+      await cancelTransfer(Number(action.dataset.transferId));
+      return;
+    }
     await runAction(action.dataset.action ?? "");
     return;
   }
@@ -599,9 +603,10 @@ async function openRemoteEntry(index: number): Promise<void> {
 
   const transferId = addTransfer("temp", entry.path, "temp");
   try {
-    const result = await invokeKubectl<TempDownloadResult>("download_remote_to_temp", {
+    const result = await invoke<TempDownloadResult>("download_remote_to_temp", {
       target,
       remotePath: entry.path,
+      operationId: transferId,
     });
     updateTransfer(transferId, "success", result.localPath, null);
     await invoke("open_local_file", { path: result.localPath });
@@ -832,10 +837,11 @@ async function downloadSelectedRemote(): Promise<void> {
 
   const transferId = addTransfer("download", entry.path, destination);
   try {
-    await invokeKubectl("copy_remote_to_local", {
+    await invoke("copy_remote_to_local", {
       target,
       remotePath: entry.path,
       localPath: destination,
+      operationId: transferId,
     });
     updateTransfer(transferId, "success", destination, null);
     await loadLocalDir(state.local.path, true);
@@ -862,11 +868,30 @@ async function uploadSelectedLocal(): Promise<void> {
       target,
       localPath: entry.path,
       remotePath: destination,
+      operationId: transferId,
     });
     updateTransfer(transferId, "success", destination, null);
     await loadRemotePath(state.remote.path);
   } catch (error) {
     updateTransfer(transferId, "failed", destination, formatError(error));
+  }
+}
+
+async function cancelTransfer(id: number): Promise<void> {
+  if (!Number.isFinite(id)) {
+    return;
+  }
+  const transfer = state.transfers.find((item) => item.id === id);
+  if (!transfer || transfer.status !== "running") {
+    return;
+  }
+
+  try {
+    await invoke("cancel_kubectl_operation", { operationId: id });
+    updateTransfer(id, "failed", transfer.destination, "Anulowano.");
+  } catch (error) {
+    transfer.error = formatError(error);
+    render();
   }
 }
 
@@ -1307,7 +1332,10 @@ function renderTransfers(): string {
               <span><i data-lucide="${direction}"></i></span>
               <span class="truncate">${escapeHtml(entry.source)}</span>
               <span class="truncate">${escapeHtml(entry.destination)}</span>
-              <span class="truncate">${escapeHtml(entry.error ?? elapsedLabel(entry))}</span>
+              <span class="transfer-info">
+                <span class="truncate">${escapeHtml(entry.error ?? elapsedLabel(entry))}</span>
+                ${entry.status === "running" ? `<button class="cancel-transfer-button" type="button" data-action="cancel-transfer" data-transfer-id="${entry.id}" title="Anuluj transfer">Anuluj</button>` : ""}
+              </span>
             </div>
           `;
         })
