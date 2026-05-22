@@ -1163,6 +1163,7 @@ function updateTransfer(
 }
 
 function render(): void {
+  const scrollPositions = captureScrollPositions();
   app.innerHTML = `
     <div class="app-shell">
       ${state.bootError ? `<div class="banner error">${escapeHtml(state.bootError)}</div>` : `<div class="banner-placeholder" aria-hidden="true"></div>`}
@@ -1178,6 +1179,27 @@ function render(): void {
 
   createIcons({ icons });
   updateActionButtons();
+  restoreScrollPositions(scrollPositions);
+}
+
+function captureScrollPositions(): Record<string, number> {
+  const positions: Record<string, number> = {};
+  app.querySelectorAll<HTMLElement>("[data-scroll-key]").forEach((element) => {
+    const key = element.dataset.scrollKey;
+    if (key) {
+      positions[key] = element.scrollTop;
+    }
+  });
+  return positions;
+}
+
+function restoreScrollPositions(positions: Record<string, number>): void {
+  app.querySelectorAll<HTMLElement>("[data-scroll-key]").forEach((element) => {
+    const key = element.dataset.scrollKey;
+    if (key && positions[key] !== undefined) {
+      element.scrollTop = positions[key];
+    }
+  });
 }
 
 function renderRemotePanel(): string {
@@ -1206,7 +1228,7 @@ function renderRemotePanel(): string {
         <span>Rozmiar</span>
         <span>Info</span>
       </div>
-      <div class="file-list" role="listbox" aria-busy="${state.remote.loading}">
+      <div class="file-list" role="listbox" aria-busy="${state.remote.loading}" data-scroll-key="remote-files">
         ${renderRemoteRows()}
       </div>
       <div class="panel-footer">
@@ -1244,7 +1266,7 @@ function renderLocalPanel(): string {
         <span>Rozmiar</span>
         <span>Modyfikacja</span>
       </div>
-      <div class="file-list" role="listbox" aria-busy="${state.local.loading}">
+      <div class="file-list" role="listbox" aria-busy="${state.local.loading}" data-scroll-key="local-files">
         ${renderLocalRows()}
       </div>
       <div class="panel-footer">
@@ -1513,7 +1535,7 @@ function renderTransfers(): string {
         ${renderTransferHeaderCell("Cel", 3)}
         ${renderTransferHeaderCell("Info", 4, false)}
       </div>
-      <div class="transfer-list">${rows}</div>
+      <div class="transfer-list" data-scroll-key="transfers">${rows}</div>
     </section>
   `;
 }
@@ -1555,7 +1577,7 @@ function renderKubectlConsole(): string {
         <span>Konsola kubectl</span>
         <span>${renderKubectlVersionLabel()}</span>
       </div>
-      <div class="console-list">${rows}</div>
+      <div class="console-list" data-scroll-key="console">${rows}</div>
     </section>
   `;
 }
