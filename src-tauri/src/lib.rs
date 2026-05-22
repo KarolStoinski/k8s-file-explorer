@@ -517,7 +517,20 @@ fn join_local_path(base: String, child: String) -> String {
 }
 
 #[tauri::command]
-fn copy_remote_to_local(
+async fn copy_remote_to_local(
+    target: RemoteTarget,
+    remote_path: String,
+    local_path: String,
+    operation_id: Option<u64>,
+) -> Result<TransferResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        copy_remote_to_local_blocking(target, remote_path, local_path, operation_id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+fn copy_remote_to_local_blocking(
     target: RemoteTarget,
     remote_path: String,
     local_path: String,
@@ -545,7 +558,20 @@ fn copy_remote_to_local(
 }
 
 #[tauri::command]
-fn copy_local_to_remote(
+async fn copy_local_to_remote(
+    target: RemoteTarget,
+    local_path: String,
+    remote_path: String,
+    operation_id: Option<u64>,
+) -> Result<TransferResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        copy_local_to_remote_blocking(target, local_path, remote_path, operation_id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+fn copy_local_to_remote_blocking(
     target: RemoteTarget,
     local_path: String,
     remote_path: String,
@@ -573,7 +599,19 @@ fn copy_local_to_remote(
 }
 
 #[tauri::command]
-fn download_remote_to_temp(
+async fn download_remote_to_temp(
+    target: RemoteTarget,
+    remote_path: String,
+    operation_id: Option<u64>,
+) -> Result<TempDownloadResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        download_remote_to_temp_blocking(target, remote_path, operation_id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+fn download_remote_to_temp_blocking(
     target: RemoteTarget,
     remote_path: String,
     operation_id: Option<u64>,
@@ -591,7 +629,7 @@ fn download_remote_to_temp(
     let local_path = temp_dir.join(format!("{millis}-{}", sanitize_file_name(&file_name)));
     let local_path_string = path_to_string(&local_path);
 
-    copy_remote_to_local(target, remote_path, local_path_string.clone(), operation_id)?;
+    copy_remote_to_local_blocking(target, remote_path, local_path_string.clone(), operation_id)?;
     Ok(TempDownloadResult {
         local_path: local_path_string,
     })
