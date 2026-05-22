@@ -1,6 +1,0 @@
-- [ ] napisz wytyczne AGENTS.md
-- [ ] dodaj możliwość zmiany wielkości kolumn status, źródło, cel, info
-- [ ] daj możliwość zaznaczania wielu plików naraz
-- [ ] pokazuj postęp kopiowania
-- [ ] dodaj pod prawym przyciskiem myszy menu dla k8s będzie tam opcja "pobierz", dla lokalnych plików "wyślij"
-- [ ] przyciski "pobierz" i "wyślij" umieść pod panelami z plikami

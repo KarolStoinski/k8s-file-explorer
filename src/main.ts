@@ -118,6 +118,7 @@ interface RemoteState {
   container: ContainerEntry | null;
   path: string;
   selectedIndex: number | null;
+  selectedIndices: number[];
   loading: boolean;
   error: string | null;
 }
@@ -127,8 +128,16 @@ interface LocalState {
   parent: string | null;
   entries: LocalFileEntry[];
   selectedIndex: number | null;
+  selectedIndices: number[];
   loading: boolean;
   error: string | null;
+}
+
+interface ContextMenuState {
+  panel: "remote" | "local";
+  index: number;
+  x: number;
+  y: number;
 }
 
 interface AppState {
@@ -138,6 +147,8 @@ interface AppState {
   transfers: TransferEntry[];
   kubectlLogs: KubectlLogEntry[];
   activeKubectlActions: number;
+  contextMenu: ContextMenuState | null;
+  transferColumns: number[];
   nextTransferId: number;
   bootError: string | null;
 }
@@ -165,6 +176,7 @@ const state: AppState = {
     container: null,
     path: "/",
     selectedIndex: null,
+    selectedIndices: [],
     loading: false,
     error: null,
   },
@@ -173,22 +185,39 @@ const state: AppState = {
     parent: null,
     entries: [],
     selectedIndex: null,
+    selectedIndices: [],
     loading: false,
     error: null,
   },
   transfers: [],
   kubectlLogs: [],
   activeKubectlActions: 0,
+  contextMenu: null,
+  transferColumns: [120, 36, 360, 360, 260],
   nextTransferId: 1,
   bootError: null,
 };
+
+let activeTransferResize: { index: number; startX: number; startWidth: number } | null = null;
 
 app.addEventListener("click", (event) => {
   void handleClick(event);
 });
 
+app.addEventListener("contextmenu", (event) => {
+  handleContextMenu(event);
+});
+
 app.addEventListener("dblclick", (event) => {
   void handleDoubleClick(event);
+});
+
+document.addEventListener("mousemove", (event) => {
+  resizeTransferColumn(event);
+});
+
+document.addEventListener("mouseup", () => {
+  activeTransferResize = null;
 });
 
 app.addEventListener("keydown", (event) => {
@@ -222,9 +251,7 @@ async function init(): Promise<void> {
 async function loadKubectlLogs(shouldRender = true): Promise<void> {
   try {
     const logs = await invoke<KubectlLogEntry[]>("get_kubectl_logs");
-    const lastCurrent = state.kubectlLogs.at(-1)?.id ?? null;
-    const lastNext = logs.at(-1)?.id ?? null;
-    if (lastCurrent === lastNext && state.kubectlLogs.length === logs.length) {
+    if (kubectlLogsUnchanged(state.kubectlLogs, logs)) {
       return;
     }
     state.kubectlLogs = logs;
@@ -236,21 +263,29 @@ async function loadKubectlLogs(shouldRender = true): Promise<void> {
   }
 }
 
+function kubectlLogsUnchanged(current: KubectlLogEntry[], next: KubectlLogEntry[]): boolean {
+  if (current.length !== next.length) {
+    return false;
+  }
+  return current.every((entry, index) => {
+    const nextEntry = next[index];
+    return (
+      nextEntry &&
+      entry.id === nextEntry.id &&
+      entry.finished === nextEntry.finished &&
+      entry.success === nextEntry.success &&
+      entry.durationMs === nextEntry.durationMs &&
+      entry.stdout === nextEntry.stdout &&
+      entry.stderr === nextEntry.stderr &&
+      entry.error === nextEntry.error
+    );
+  });
+}
+
 function updateKubectlRuntimeViews(): void {
   const consolePanel = app.querySelector<HTMLElement>(".console-panel");
   if (consolePanel) {
     consolePanel.outerHTML = renderKubectlConsole();
-  }
-
-  const topActions = app.querySelector<HTMLElement>(".top-actions");
-  if (topActions) {
-    const activity = topActions.querySelector<HTMLElement>(".kubectl-activity");
-    const nextActivity = renderKubectlActivity();
-    if (nextActivity && !activity) {
-      topActions.insertAdjacentHTML("afterbegin", nextActivity);
-    } else if (!nextActivity && activity) {
-      activity.remove();
-    }
   }
 
   createIcons({ icons });
@@ -278,6 +313,21 @@ function nextPaint(): Promise<void> {
 
 async function handleClick(event: MouseEvent): Promise<void> {
   const target = event.target as HTMLElement;
+  const resizeHandle = target.closest<HTMLElement>("[data-transfer-resize]");
+  if (resizeHandle) {
+    const index = Number(resizeHandle.dataset.transferResize);
+    if (Number.isFinite(index)) {
+      activeTransferResize = {
+        index,
+        startX: event.clientX,
+        startWidth: state.transferColumns[index],
+      };
+    }
+    return;
+  }
+
+  closeContextMenu();
+
   const breadcrumb = target.closest<HTMLButtonElement>("[data-breadcrumb]");
   if (breadcrumb) {
     if (breadcrumb.disabled || state.remote.loading || state.activeKubectlActions > 0) {
@@ -313,11 +363,85 @@ async function handleClick(event: MouseEvent): Promise<void> {
 
   if (panel === "remote") {
     state.remote.selectedIndex = index;
+    state.remote.selectedIndices = updateSelectedIndices(state.remote.selectedIndices, index, event);
   } else if (panel === "local") {
     state.local.selectedIndex = index;
+    state.local.selectedIndices = updateSelectedIndices(state.local.selectedIndices, index, event);
   }
   updateSelection(panel ?? "");
   updateActionButtons();
+}
+
+function closeContextMenu(): void {
+  state.contextMenu = null;
+  app.querySelector<HTMLElement>(".context-menu")?.remove();
+}
+
+function handleContextMenu(event: MouseEvent): void {
+  const row = (event.target as HTMLElement).closest<HTMLElement>("[data-panel][data-index]");
+  if (!row) {
+    return;
+  }
+  event.preventDefault();
+  const index = Number(row.dataset.index);
+  const panel = row.dataset.panel === "remote" ? "remote" : "local";
+  if (!Number.isFinite(index)) {
+    return;
+  }
+  if (panel === "remote") {
+    state.remote.selectedIndex = index;
+    if (!state.remote.selectedIndices.includes(index)) {
+      state.remote.selectedIndices = [index];
+    }
+  } else {
+    state.local.selectedIndex = index;
+    if (!state.local.selectedIndices.includes(index)) {
+      state.local.selectedIndices = [index];
+    }
+  }
+  state.contextMenu = { panel, index, x: event.clientX, y: event.clientY };
+  updateSelection(panel);
+  updateActionButtons();
+  renderContextMenuInPlace();
+}
+
+function updateSelectedIndices(current: number[], index: number, event: MouseEvent): number[] {
+  if (event.metaKey || event.ctrlKey) {
+    return current.includes(index) ? current.filter((item) => item !== index) : [...current, index].sort((a, b) => a - b);
+  }
+  if (event.shiftKey && current.length > 0) {
+    const anchor = current[current.length - 1];
+    const start = Math.min(anchor, index);
+    const end = Math.max(anchor, index);
+    return Array.from({ length: end - start + 1 }, (_, offset) => start + offset);
+  }
+  return [index];
+}
+
+function resizeTransferColumn(event: MouseEvent): void {
+  if (!activeTransferResize) {
+    return;
+  }
+  const nextColumns = [...state.transferColumns];
+  nextColumns[activeTransferResize.index] = Math.max(32, activeTransferResize.startWidth + event.clientX - activeTransferResize.startX);
+  state.transferColumns = nextColumns;
+  updateTransferColumnStyles();
+}
+
+function updateTransferColumnStyles(): void {
+  const value = state.transferColumns.map((width) => `${width}px`).join(" ");
+  app.querySelectorAll<HTMLElement>(".transfer-header, .transfer-row").forEach((element) => {
+    element.style.setProperty("--transfer-columns", value);
+  });
+}
+
+function renderContextMenuInPlace(): void {
+  app.querySelector<HTMLElement>(".context-menu")?.remove();
+  const menu = renderContextMenu();
+  if (menu) {
+    app.querySelector<HTMLElement>(".app-shell")?.insertAdjacentHTML("beforeend", menu);
+    createIcons({ icons });
+  }
 }
 
 async function handleDoubleClick(event: MouseEvent): Promise<void> {
@@ -414,6 +538,7 @@ async function loadKubeconfigs(showLoading: boolean): Promise<void> {
     state.remote.kubeconfigs = await invoke<KubeconfigEntry[]>("scan_kubeconfigs");
     if (state.remote.level === "kubeconfigs") {
       state.remote.selectedIndex = null;
+      state.remote.selectedIndices = [];
     }
   } catch (error) {
     state.remote.error = formatError(error);
@@ -471,6 +596,7 @@ async function openKubeconfig(index: number): Promise<void> {
     entries: [],
     path: "/",
     selectedIndex: null,
+    selectedIndices: [],
     loading: true,
     error: null,
   };
@@ -505,6 +631,7 @@ async function openNamespace(index: number): Promise<void> {
     containers: [],
     entries: [],
     selectedIndex: null,
+    selectedIndices: [],
     loading: true,
     error: null,
   };
@@ -538,6 +665,7 @@ async function openPod(index: number): Promise<void> {
     containers: [],
     entries: [],
     selectedIndex: null,
+    selectedIndices: [],
     loading: true,
     error: null,
   };
@@ -578,6 +706,7 @@ async function openContainer(index: number): Promise<void> {
   state.remote.container = container;
   state.remote.level = "remote";
   state.remote.selectedIndex = null;
+  state.remote.selectedIndices = [];
   await loadRemotePath("/");
 }
 
@@ -627,6 +756,7 @@ async function loadRemotePath(path: string): Promise<void> {
     path,
     entries: [],
     selectedIndex: null,
+    selectedIndices: [],
     loading: true,
     error: null,
   };
@@ -658,6 +788,7 @@ async function loadLocalDir(path: string | null, showLoading: boolean): Promise<
     state.local.parent = directory.parent;
     state.local.entries = directory.entries;
     state.local.selectedIndex = null;
+    state.local.selectedIndices = [];
     state.local.error = null;
   } catch (error) {
     state.local.error = formatError(error);
@@ -738,6 +869,7 @@ async function remoteUp(): Promise<void> {
       state.remote.pod = null;
       state.remote.container = null;
       state.remote.selectedIndex = null;
+      state.remote.selectedIndices = [];
       render();
       return;
     case "containers":
@@ -745,6 +877,7 @@ async function remoteUp(): Promise<void> {
       state.remote.pod = null;
       state.remote.container = null;
       state.remote.selectedIndex = null;
+      state.remote.selectedIndices = [];
       render();
       return;
     case "remote":
@@ -762,6 +895,7 @@ async function remoteUp(): Promise<void> {
       }
       state.remote.entries = [];
       state.remote.selectedIndex = null;
+      state.remote.selectedIndices = [];
       render();
       return;
   }
@@ -783,6 +917,7 @@ async function openRemoteBreadcrumb(level: string, path: string): Promise<void> 
       state.remote.entries = [];
       state.remote.path = "/";
       state.remote.selectedIndex = null;
+      state.remote.selectedIndices = [];
       render();
       return;
     case "namespace":
@@ -793,6 +928,7 @@ async function openRemoteBreadcrumb(level: string, path: string): Promise<void> 
       state.remote.entries = [];
       state.remote.path = "/";
       state.remote.selectedIndex = null;
+      state.remote.selectedIndices = [];
       render();
       return;
     case "pod":
@@ -805,6 +941,7 @@ async function openRemoteBreadcrumb(level: string, path: string): Promise<void> 
       state.remote.entries = [];
       state.remote.path = "/";
       state.remote.selectedIndex = null;
+      state.remote.selectedIndices = [];
       render();
       if (state.remote.level === "remote") {
         await loadRemotePath("/");
@@ -820,22 +957,33 @@ async function openRemoteBreadcrumb(level: string, path: string): Promise<void> 
 }
 
 async function downloadSelectedRemote(): Promise<void> {
-  const entry = selectedRemoteEntry();
+  const entries = selectedRemoteEntries();
   const target = remoteTarget();
-  if (!entry || !target || !state.local.path) {
+  if (entries.length === 0 || !target || !state.local.path) {
     return;
   }
 
-  const destination = await invoke<string>("join_local_path", {
-    base: state.local.path,
-    child: entry.name,
-  });
+  for (const entry of entries) {
+    const destination = await invoke<string>("join_local_path", {
+      base: state.local.path,
+      child: entry.name,
+    });
 
-  if (localNameExists(entry.name) && !window.confirm(`Lokalny element "${entry.name}" już istnieje. Nadpisać?`)) {
-    return;
+    if (localNameExists(entry.name) && !window.confirm(`Lokalny element "${entry.name}" już istnieje. Nadpisać?`)) {
+      continue;
+    }
+
+    const transferId = addTransfer("download", entry.path, destination);
+    void runDownloadTransfer(transferId, target, entry, destination);
   }
+}
 
-  const transferId = addTransfer("download", entry.path, destination);
+async function runDownloadTransfer(
+  transferId: number,
+  target: RemoteTarget,
+  entry: RemoteFileEntry,
+  destination: string,
+): Promise<void> {
   try {
     await invoke("copy_remote_to_local", {
       target,
@@ -851,20 +999,31 @@ async function downloadSelectedRemote(): Promise<void> {
 }
 
 async function uploadSelectedLocal(): Promise<void> {
-  const entry = selectedLocalEntry();
+  const entries = selectedLocalEntries();
   const target = remoteTarget();
-  if (!entry || !target || state.remote.level !== "remote") {
+  if (entries.length === 0 || !target || state.remote.level !== "remote") {
     return;
   }
 
-  const destination = joinRemotePath(state.remote.path, entry.name);
-  if (remoteNameExists(entry.name) && !window.confirm(`Zdalny element "${entry.name}" już istnieje. Nadpisać?`)) {
-    return;
-  }
+  for (const entry of entries) {
+    const destination = joinRemotePath(state.remote.path, entry.name);
+    if (remoteNameExists(entry.name) && !window.confirm(`Zdalny element "${entry.name}" już istnieje. Nadpisać?`)) {
+      continue;
+    }
 
-  const transferId = addTransfer("upload", entry.path, destination);
+    const transferId = addTransfer("upload", entry.path, destination);
+    void runUploadTransfer(transferId, target, entry, destination);
+  }
+}
+
+async function runUploadTransfer(
+  transferId: number,
+  target: RemoteTarget,
+  entry: LocalFileEntry,
+  destination: string,
+): Promise<void> {
   try {
-    await invokeKubectl("copy_local_to_remote", {
+    await invoke("copy_local_to_remote", {
       target,
       localPath: entry.path,
       remotePath: destination,
@@ -906,6 +1065,7 @@ function resetRemoteToRoot(): void {
   state.remote.entries = [];
   state.remote.path = "/";
   state.remote.selectedIndex = null;
+  state.remote.selectedIndices = [];
   state.remote.error = null;
 }
 
@@ -926,17 +1086,38 @@ function remoteTarget(): RemoteTarget | null {
 }
 
 function selectedRemoteEntry(): RemoteFileEntry | null {
-  if (state.remote.level !== "remote" || state.remote.selectedIndex === null) {
-    return null;
-  }
-  return state.remote.entries[state.remote.selectedIndex] ?? null;
+  return selectedRemoteEntries()[0] ?? null;
 }
 
 function selectedLocalEntry(): LocalFileEntry | null {
-  if (state.local.selectedIndex === null) {
-    return null;
+  return selectedLocalEntries()[0] ?? null;
+}
+
+function selectedRemoteEntries(): RemoteFileEntry[] {
+  if (state.remote.level !== "remote") {
+    return [];
   }
-  return state.local.entries[state.local.selectedIndex] ?? null;
+  return selectedRemoteIndices().map((index) => state.remote.entries[index]).filter(Boolean);
+}
+
+function selectedLocalEntries(): LocalFileEntry[] {
+  return selectedLocalIndices().map((index) => state.local.entries[index]).filter(Boolean);
+}
+
+function selectedRemoteIndices(): number[] {
+  return state.remote.selectedIndices.length > 0
+    ? state.remote.selectedIndices
+    : state.remote.selectedIndex === null
+      ? []
+      : [state.remote.selectedIndex];
+}
+
+function selectedLocalIndices(): number[] {
+  return state.local.selectedIndices.length > 0
+    ? state.local.selectedIndices
+    : state.local.selectedIndex === null
+      ? []
+      : [state.local.selectedIndex];
 }
 
 function localNameExists(name: string): boolean {
@@ -984,24 +1165,6 @@ function updateTransfer(
 function render(): void {
   app.innerHTML = `
     <div class="app-shell">
-      <header class="topbar">
-        <div class="brand">
-          <span class="brand-mark">k8s</span>
-          <div>
-            <h1>k8s-file-explorer</h1>
-            <p>${renderKubectlStatus()}</p>
-          </div>
-        </div>
-        <div class="top-actions">
-          ${renderKubectlActivity()}
-          <button class="tool-button" type="button" data-action="download" title="Pobierz z poda" ${canDownload() ? "" : "disabled"}>
-            <i data-lucide="download"></i><span>Pobierz</span>
-          </button>
-          <button class="tool-button" type="button" data-action="upload" title="Wyślij do poda" ${canUpload() ? "" : "disabled"}>
-            <i data-lucide="upload"></i><span>Wyślij</span>
-          </button>
-        </div>
-      </header>
       ${state.bootError ? `<div class="banner error">${escapeHtml(state.bootError)}</div>` : `<div class="banner-placeholder" aria-hidden="true"></div>`}
       <main class="workspace">
         ${renderRemotePanel()}
@@ -1009,33 +1172,12 @@ function render(): void {
       </main>
       ${renderTransfers()}
       ${renderKubectlConsole()}
+      ${renderContextMenu()}
     </div>
   `;
 
   createIcons({ icons });
   updateActionButtons();
-}
-
-function renderKubectlStatus(): string {
-  if (!state.kubectl) {
-    return "Sprawdzanie kubectl...";
-  }
-  if (!state.kubectl.available) {
-    return `kubectl niedostępny${state.kubectl.error ? `: ${escapeHtml(state.kubectl.error)}` : ""}`;
-  }
-  return `kubectl ${escapeHtml(state.kubectl.version ?? "dostępny")}`;
-}
-
-function renderKubectlActivity(): string {
-  if (state.activeKubectlActions === 0) {
-    return "";
-  }
-  return `
-    <span class="kubectl-activity" aria-live="polite">
-      <i data-lucide="loader"></i>
-      <span>kubectl działa</span>
-    </span>
-  `;
 }
 
 function renderRemotePanel(): string {
@@ -1066,6 +1208,11 @@ function renderRemotePanel(): string {
       </div>
       <div class="file-list" role="listbox" aria-busy="${state.remote.loading}">
         ${renderRemoteRows()}
+      </div>
+      <div class="panel-footer">
+        <button class="tool-button" type="button" data-action="download" title="Pobierz z poda" ${canDownload() ? "" : "disabled"}>
+          <i data-lucide="download"></i><span>Pobierz</span>
+        </button>
       </div>
     </section>
   `;
@@ -1100,6 +1247,11 @@ function renderLocalPanel(): string {
       <div class="file-list" role="listbox" aria-busy="${state.local.loading}">
         ${renderLocalRows()}
       </div>
+      <div class="panel-footer">
+        <button class="tool-button" type="button" data-action="upload" title="Wyślij do poda" ${canUpload() ? "" : "disabled"}>
+          <i data-lucide="upload"></i><span>Wyślij</span>
+        </button>
+      </div>
     </section>
   `;
 }
@@ -1123,7 +1275,7 @@ function renderRemoteRows(): string {
             panel: "remote",
             index,
             grid: "remote-grid",
-            selected: state.remote.selectedIndex === index,
+            selected: remoteRowSelected(index),
             icon: entry.isValid ? "server" : "triangle-alert",
             name: entry.name,
             status: entry.isValid ? "kubeconfig" : "niepoprawny",
@@ -1143,7 +1295,7 @@ function renderRemoteRows(): string {
             panel: "remote",
             index,
             grid: "remote-grid",
-            selected: state.remote.selectedIndex === index,
+            selected: remoteRowSelected(index),
             icon: "folder",
             name: entry.name,
             status: entry.status ?? "",
@@ -1162,7 +1314,7 @@ function renderRemoteRows(): string {
             panel: "remote",
             index,
             grid: "remote-grid",
-            selected: state.remote.selectedIndex === index,
+            selected: remoteRowSelected(index),
             icon: "box",
             name: entry.name,
             status: entry.phase ?? "",
@@ -1182,7 +1334,7 @@ function renderRemoteRows(): string {
             panel: "remote",
             index,
             grid: "remote-grid",
-            selected: state.remote.selectedIndex === index,
+            selected: remoteRowSelected(index),
             icon: "container",
             name: entry.name,
             status: entry.ready === null ? "" : entry.ready ? "ready" : "not ready",
@@ -1202,7 +1354,7 @@ function renderRemoteRows(): string {
             panel: "remote",
             index,
             grid: "remote-grid",
-            selected: state.remote.selectedIndex === index,
+            selected: remoteRowSelected(index),
             icon: iconForKind(entry.kind),
             name: displayRemoteName(entry),
             status: entry.permissions ?? entry.kind,
@@ -1231,7 +1383,7 @@ function renderLocalRows(): string {
         panel: "local",
         index,
         grid: "local-grid",
-        selected: state.local.selectedIndex === index,
+        selected: localRowSelected(index),
         icon: iconForKind(entry.kind),
         name: entry.name,
         status: localKindLabel(entry),
@@ -1241,6 +1393,14 @@ function renderLocalRows(): string {
       }),
     )
     .join("");
+}
+
+function remoteRowSelected(index: number): boolean {
+  return state.remote.selectedIndices.includes(index) || state.remote.selectedIndex === index;
+}
+
+function localRowSelected(index: number): boolean {
+  return state.local.selectedIndices.includes(index) || state.local.selectedIndex === index;
 }
 
 function renderRow(options: {
@@ -1264,7 +1424,7 @@ function renderRow(options: {
       <span class="name-cell"><i data-lucide="${options.icon}"></i><span>${escapeHtml(options.name)}</span></span>
       <span>${escapeHtml(options.status)}</span>
       <span>${escapeHtml(options.size)}</span>
-      <span class="truncate">${escapeHtml(options.info)}</span>
+      <span class="truncate" title="${escapeAttr(options.info)}">${escapeHtml(options.info)}</span>
     </button>
   `;
 }
@@ -1321,20 +1481,22 @@ function renderBreadcrumbButton(label: string, level: string, path = ""): string
 }
 
 function renderTransfers(): string {
+  const gridStyle = `--transfer-columns: ${state.transferColumns.map((value) => `${value}px`).join(" ")};`;
   const rows = state.transfers.length
     ? state.transfers
         .map((entry) => {
           const icon = entry.status === "running" ? "loader" : entry.status === "success" ? "check" : "circle-x";
           const direction = entry.direction === "upload" ? "upload" : entry.direction === "download" ? "download" : "file-down";
           return `
-            <div class="transfer-row ${entry.status}">
+            <div class="transfer-row ${entry.status}" style="${gridStyle}">
               <span class="transfer-status"><i data-lucide="${icon}"></i>${escapeHtml(entry.status)}</span>
               <span><i data-lucide="${direction}"></i></span>
-              <span class="truncate">${escapeHtml(entry.source)}</span>
-              <span class="truncate">${escapeHtml(entry.destination)}</span>
+              <span class="truncate" title="${escapeAttr(entry.source)}">${escapeHtml(entry.source)}</span>
+              <span class="truncate" title="${escapeAttr(entry.destination)}">${escapeHtml(entry.destination)}</span>
               <span class="transfer-info">
-                <span class="truncate">${escapeHtml(entry.error ?? elapsedLabel(entry))}</span>
+                <span class="truncate" title="${escapeAttr(entry.error ?? elapsedLabel(entry))}">${escapeHtml(entry.error ?? elapsedLabel(entry))}</span>
                 ${entry.status === "running" ? `<button class="cancel-transfer-button" type="button" data-action="cancel-transfer" data-transfer-id="${entry.id}" title="Anuluj transfer">Anuluj</button>` : ""}
+                ${entry.status === "running" ? `<span class="copy-progress" aria-hidden="true"></span>` : ""}
               </span>
             </div>
           `;
@@ -1344,15 +1506,24 @@ function renderTransfers(): string {
 
   return `
     <section class="transfer-panel" aria-label="Transfery">
-      <div class="transfer-header">
-        <span>Status</span>
-        <span></span>
-        <span>Źródło</span>
-        <span>Cel</span>
-        <span>Info</span>
+      <div class="transfer-header" style="${gridStyle}">
+        ${renderTransferHeaderCell("Status", 0)}
+        ${renderTransferHeaderCell("", 1)}
+        ${renderTransferHeaderCell("Źródło", 2)}
+        ${renderTransferHeaderCell("Cel", 3)}
+        ${renderTransferHeaderCell("Info", 4, false)}
       </div>
       <div class="transfer-list">${rows}</div>
     </section>
+  `;
+}
+
+function renderTransferHeaderCell(label: string, index: number, resizable = true): string {
+  return `
+    <span class="transfer-header-cell">
+      <span>${escapeHtml(label)}</span>
+      ${resizable ? `<button class="transfer-resize-handle" type="button" data-transfer-resize="${index}" title="Zmień szerokość kolumny"></button>` : ""}
+    </span>
   `;
 }
 
@@ -1382,23 +1553,59 @@ function renderKubectlConsole(): string {
     <section class="console-panel" aria-label="Konsola kubectl">
       <div class="console-header">
         <span>Konsola kubectl</span>
+        <span>${renderKubectlVersionLabel()}</span>
       </div>
       <div class="console-list">${rows}</div>
     </section>
   `;
 }
 
+function renderKubectlVersionLabel(): string {
+  if (!state.kubectl) {
+    return "sprawdzanie...";
+  }
+  if (!state.kubectl.available) {
+    return state.kubectl.error ? `niedostępny: ${escapeHtml(state.kubectl.error)}` : "niedostępny";
+  }
+  return escapeHtml(state.kubectl.version ?? "dostępny");
+}
+
+function renderContextMenu(): string {
+  const menu = state.contextMenu;
+  if (!menu) {
+    return "";
+  }
+  const remoteDownload = menu.panel === "remote" && state.remote.level === "remote" && canDownload();
+  const localUpload = menu.panel === "local" && canUpload();
+  if (!remoteDownload && !localUpload) {
+    return "";
+  }
+  return `
+    <div class="context-menu" style="left: ${menu.x}px; top: ${menu.y}px;">
+      ${
+        remoteDownload
+          ? `<button type="button" data-action="download"><i data-lucide="download"></i><span>Pobierz</span></button>`
+          : ""
+      }
+      ${
+        localUpload
+          ? `<button type="button" data-action="upload"><i data-lucide="upload"></i><span>Wyślij</span></button>`
+          : ""
+      }
+    </div>
+  `;
+}
+
 function canDownload(): boolean {
-  return Boolean(selectedRemoteEntry() && remoteTarget() && state.local.path && !state.remote.loading && state.activeKubectlActions === 0);
+  return Boolean(selectedRemoteEntries().length > 0 && remoteTarget() && state.local.path && !state.remote.loading);
 }
 
 function canUpload(): boolean {
   return Boolean(
-    selectedLocalEntry() &&
+    selectedLocalEntries().length > 0 &&
       remoteTarget() &&
       state.remote.level === "remote" &&
-      !state.remote.loading &&
-      state.activeKubectlActions === 0,
+      !state.remote.loading,
   );
 }
 
@@ -1407,8 +1614,8 @@ function updateSelection(panel: string): void {
     const index = Number(row.dataset.index);
     const selected =
       panel === "remote"
-        ? state.remote.selectedIndex === index
-        : state.local.selectedIndex === index;
+        ? remoteRowSelected(index)
+        : localRowSelected(index);
     row.classList.toggle("selected", selected);
     row.setAttribute("aria-selected", String(selected));
   });

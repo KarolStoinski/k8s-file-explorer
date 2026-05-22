@@ -43,77 +43,16 @@ button {
 
 .app-shell {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) 140px 190px;
+  grid-template-rows: auto minmax(0, 1fr) 140px 190px;
   height: 100%;
   min-width: 920px;
   background: #eef1f4;
 }
 
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
-  background: #fbfcfd;
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  gap: 10px;
-}
-
-.brand-mark {
-  display: grid;
-  width: 38px;
-  height: 32px;
-  place-items: center;
-  border: 1px solid #9ac0df;
-  border-radius: 8px;
-  background: #e4f1fb;
-  color: #155c92;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.brand h1 {
-  margin: 0;
-  font-size: 15px;
-  line-height: 20px;
-}
-
-.brand p {
-  max-width: 780px;
-  margin: 0;
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 16px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.top-actions,
 .panel-actions {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.kubectl-activity {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 30px;
-  padding: 0 9px;
-  border: 1px solid #d6bb65;
-  border-radius: 7px;
-  background: #fff8df;
-  color: #6f5700;
-  font-size: 12px;
 }
 
 .tool-button,
@@ -154,7 +93,6 @@ button {
 
 .tool-button svg,
 .icon-button svg,
-.kubectl-activity svg,
 .file-row svg,
 .empty-state svg,
 .breadcrumbs svg,
@@ -190,12 +128,21 @@ button {
 
 .panel {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   border-right: 1px solid var(--border);
   background: var(--surface);
+}
+
+.panel-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: #fbfcfd;
 }
 
 .local-panel {
@@ -385,7 +332,6 @@ button {
 }
 
 .empty-state .lucide-loader,
-.kubectl-activity .lucide-loader,
 .icon-button .lucide-loader,
 .transfer-row .lucide-loader {
   animation: spin 1s linear infinite;
@@ -401,10 +347,34 @@ button {
 .transfer-header,
 .transfer-row {
   display: grid;
-  grid-template-columns: 120px 36px minmax(260px, 1fr) minmax(260px, 1fr) minmax(160px, 0.7fr);
+  grid-template-columns: var(--transfer-columns, 120px 36px 360px 360px 260px);
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.transfer-header-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+}
+
+.transfer-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -5px;
+  width: 10px;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: col-resize;
+}
+
+.transfer-resize-handle:hover {
+  background: #dbe5ef;
 }
 
 .transfer-header {
@@ -423,6 +393,7 @@ button {
 }
 
 .transfer-row {
+  position: relative;
   min-height: 30px;
   padding: 0 12px;
   border-bottom: 1px solid #edf0f3;
@@ -463,6 +434,57 @@ button {
   background: #ffe4e1;
 }
 
+.copy-progress {
+  position: absolute;
+  right: 12px;
+  bottom: 2px;
+  left: 12px;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dce7f2;
+}
+
+.copy-progress::after {
+  display: block;
+  width: 36%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--blue);
+  animation: progress-slide 1.2s ease-in-out infinite;
+  content: "";
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 140px;
+  padding: 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: #ffffff;
+  box-shadow: 0 8px 22px rgb(15 23 42 / 18%);
+}
+
+.context-menu button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 30px;
+  gap: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+
+.context-menu button:hover {
+  background: #eef4f8;
+}
+
 .transfer-row.success .transfer-status {
   color: var(--green);
 }
@@ -489,6 +511,8 @@ button {
 .console-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 0 12px;
   border-bottom: 1px solid #293746;
   background: #172331;
@@ -496,6 +520,15 @@ button {
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
+}
+
+.console-header span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  color: #7f91a3;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
 }
 
 .console-list {
@@ -565,6 +598,15 @@ button {
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes progress-slide {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(300%);
   }
 }
 
