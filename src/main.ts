@@ -232,19 +232,48 @@ async function loadKubectlLogs(shouldRender = true): Promise<void> {
     return;
   }
   if (shouldRender) {
-    render();
+    updateKubectlRuntimeViews();
   }
+}
+
+function updateKubectlRuntimeViews(): void {
+  const consolePanel = app.querySelector<HTMLElement>(".console-panel");
+  if (consolePanel) {
+    consolePanel.outerHTML = renderKubectlConsole();
+  }
+
+  const topActions = app.querySelector<HTMLElement>(".top-actions");
+  if (topActions) {
+    const activity = topActions.querySelector<HTMLElement>(".kubectl-activity");
+    const nextActivity = renderKubectlActivity();
+    if (nextActivity && !activity) {
+      topActions.insertAdjacentHTML("afterbegin", nextActivity);
+    } else if (!nextActivity && activity) {
+      activity.remove();
+    }
+  }
+
+  createIcons({ icons });
 }
 
 async function invokeKubectl<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   state.activeKubectlActions += 1;
   render();
   try {
+    await nextPaint();
     return await invoke<T>(command, args);
   } finally {
     state.activeKubectlActions = Math.max(0, state.activeKubectlActions - 1);
     render();
   }
+}
+
+function nextPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => resolve());
+    });
+  });
 }
 
 async function handleClick(event: MouseEvent): Promise<void> {
