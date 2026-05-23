@@ -182,10 +182,10 @@ button {
   align-items: center;
   flex-wrap: wrap;
   max-width: 100%;
-  min-height: 22px;
+  min-height: 28px;
   color: var(--text-muted);
   font-size: 12px;
-  line-height: 17px;
+  line-height: 18px;
   white-space: normal;
 }
 
