@@ -1050,9 +1050,11 @@ async function loadRemotePath(path: string, useCache = true): Promise<void> {
   render();
 
   try {
-    await waitForPrefetch(cacheKey);
+    if (useCache) {
+      await waitForPrefetch(cacheKey);
+    }
     state.remote.entries =
-      remoteDirCache.get(cacheKey) ??
+      (useCache ? remoteDirCache.get(cacheKey) : undefined) ??
       (await invokeKubectl<RemoteFileEntry[]>("list_remote_dir", {
         target,
         path,
@@ -1088,11 +1090,11 @@ async function loadLocalDir(path: string | null, showLoading: boolean, useCache 
   }
 
   try {
-    if (cacheKey) {
+    if (cacheKey && useCache) {
       await waitForPrefetch(cacheKey);
     }
     const directory =
-      (cacheKey ? localDirCache.get(cacheKey) : undefined) ??
+      (cacheKey && useCache ? localDirCache.get(cacheKey) : undefined) ??
       (await invoke<LocalDirectory>("list_local_dir", { path }));
     if (cacheKey) {
       localDirCache.set(cacheKey, directory);
@@ -1324,6 +1326,7 @@ async function runDownloadTransfer(
       operationId: transferId,
     });
     updateTransfer(transferId, "success", destination, null);
+    localDirCache.delete(prefetchKey({ kind: "local-dir", path: state.local.path }));
     await loadLocalDir(state.local.path, true, false);
   } catch (error) {
     updateTransfer(transferId, "failed", destination, formatError(error));
@@ -1362,6 +1365,7 @@ async function runUploadTransfer(
       operationId: transferId,
     });
     updateTransfer(transferId, "success", destination, null);
+    remoteDirCache.delete(prefetchKey({ kind: "remote-dir", target, path: state.remote.path }));
     await loadRemotePath(state.remote.path, false);
   } catch (error) {
     updateTransfer(transferId, "failed", destination, formatError(error));
