@@ -157,6 +157,7 @@ interface AppState {
   activeKubectlActions: number;
   contextMenu: ContextMenuState | null;
   transferColumns: number[];
+  consoleExpanded: boolean;
   nextTransferId: number;
   bootError: string | null;
 }
@@ -203,6 +204,7 @@ const state: AppState = {
   activeKubectlActions: 0,
   contextMenu: null,
   transferColumns: [120, 36, 360, 360, 260],
+  consoleExpanded: false,
   nextTransferId: 1,
   bootError: null,
 };
@@ -736,6 +738,10 @@ async function runAction(action: string): Promise<void> {
       break;
     case "upload":
       await uploadSelectedLocal();
+      break;
+    case "toggle-console":
+      state.consoleExpanded = !state.consoleExpanded;
+      render();
       break;
   }
 }
@@ -1492,7 +1498,7 @@ function updateTransfer(
 function render(): void {
   const scrollPositions = captureScrollPositions();
   app.innerHTML = `
-    <div class="app-shell">
+    <div class="app-shell ${state.consoleExpanded ? "console-expanded" : "console-collapsed"}">
       ${state.bootError ? `<div class="banner error">${escapeHtml(state.bootError)}</div>` : `<div class="banner-placeholder" aria-hidden="true"></div>`}
       <main class="workspace">
         ${renderRemotePanel()}
@@ -1913,8 +1919,13 @@ function renderKubectlConsole(): string {
   return `
     <section class="console-panel" aria-label="Konsola kubectl">
       <div class="console-header">
-        <span>Konsola kubectl</span>
-        <span>${renderKubectlVersionLabel()}</span>
+        <div class="console-title">
+          <span>Konsola kubectl</span>
+          <span>${renderKubectlVersionLabel()}</span>
+        </div>
+        <button class="console-toggle" type="button" data-action="toggle-console" title="${state.consoleExpanded ? "Zminimalizuj konsolę" : "Powiększ konsolę"}">
+          <i data-lucide="${state.consoleExpanded ? "chevron-down" : "chevron-up"}"></i>
+        </button>
       </div>
       <div class="console-list" data-scroll-key="console">${rows}</div>
     </section>

@@ -43,10 +43,17 @@ button {
 
 .app-shell {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) 140px 190px;
   height: 100%;
   min-width: 920px;
   background: #eef1f4;
+}
+
+.app-shell.console-collapsed {
+  grid-template-rows: auto minmax(0, 1fr) 140px 28px;
+}
+
+.app-shell.console-expanded {
+  grid-template-rows: auto minmax(0, 1fr) 140px 190px;
 }
 
 .panel-actions {
@@ -535,13 +542,43 @@ button {
   text-transform: uppercase;
 }
 
-.console-header span:last-child {
+.console-title {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 10px;
+}
+
+.console-title span:last-child {
   min-width: 0;
   overflow: hidden;
   color: #7f91a3;
   text-overflow: ellipsis;
   text-transform: none;
   white-space: nowrap;
+}
+
+.console-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid #34475a;
+  border-radius: 5px;
+  background: #1f2d3b;
+  color: #cbd7e3;
+  cursor: pointer;
+}
+
+.console-toggle:hover {
+  background: #29394a;
+}
+
+.console-toggle svg {
+  width: 14px;
+  height: 14px;
 }
 
 .console-list {
