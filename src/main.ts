@@ -743,14 +743,14 @@ async function handleKeydown(event: KeyboardEvent): Promise<void> {
 async function runAction(action: string): Promise<void> {
   if (
     (state.remote.loading || state.activeKubectlActions > 0) &&
-    ["refresh-remote", "remote-up", "remote-root", "download", "upload", "delete-remote"].includes(action)
+    ["refresh-remote", "remote-up", "remote-root", "open-remote", "download", "upload", "delete-remote"].includes(action)
   ) {
     return;
   }
 
   if (
     state.local.loading &&
-    ["refresh-local", "local-up", "local-home", "upload", "delete-local"].includes(action)
+    ["refresh-local", "local-up", "local-home", "open-local", "upload", "delete-local"].includes(action)
   ) {
     return;
   }
@@ -776,6 +776,12 @@ async function runAction(action: string): Promise<void> {
       break;
     case "local-home":
       await openLocalHome();
+      break;
+    case "open-remote":
+      await openSelectedRemote();
+      break;
+    case "open-local":
+      await openSelectedLocal();
       break;
     case "download":
       await downloadSelectedRemote();
@@ -1106,6 +1112,14 @@ async function openRemoteIndex(index: number): Promise<void> {
       await openRemoteEntry(index);
       break;
   }
+}
+
+async function openSelectedRemote(): Promise<void> {
+  const index = selectedRemoteOpenIndex();
+  if (index === null) {
+    return;
+  }
+  await openRemoteIndex(index);
 }
 
 async function openKubeconfig(index: number): Promise<void> {
@@ -1471,6 +1485,14 @@ async function openLocalIndex(index: number): Promise<void> {
     state.local.error = formatError(error);
     render();
   }
+}
+
+async function openSelectedLocal(): Promise<void> {
+  const index = selectedLocalOpenIndex();
+  if (index === null) {
+    return;
+  }
+  await openLocalIndex(index);
 }
 
 async function openLocalHome(): Promise<void> {
@@ -1876,6 +1898,41 @@ function selectedLocalIndices(): number[] {
       : [state.local.selectedIndex];
 }
 
+function selectedRemoteOpenIndex(): number | null {
+  const indices = selectedRemoteIndices();
+  if (indices.length !== 1) {
+    return null;
+  }
+
+  const index = indices[0];
+  return index >= 0 && index < remoteLevelEntryCount() ? index : null;
+}
+
+function selectedLocalOpenIndex(): number | null {
+  const indices = selectedLocalIndices();
+  if (indices.length !== 1) {
+    return null;
+  }
+
+  const index = indices[0];
+  return state.local.entries[index] ? index : null;
+}
+
+function remoteLevelEntryCount(): number {
+  switch (state.remote.level) {
+    case "kubeconfigs":
+      return state.remote.kubeconfigs.length;
+    case "namespaces":
+      return state.remote.namespaces.length;
+    case "pods":
+      return state.remote.pods.length;
+    case "containers":
+      return state.remote.containers.length;
+    case "remote":
+      return state.remote.entries.length;
+  }
+}
+
 function localNameExists(name: string): boolean {
   return state.local.entries.some((entry) => entry.name === name);
 }
@@ -2007,6 +2064,9 @@ function renderRemotePanel(themeIcon: string, themeTitle: string): string {
       </div>
       <div class="panel-footer">
         ${renderTarWarning()}
+        <button class="tool-button" type="button" data-action="open-remote" title="Otwórz zaznaczony element" ${canOpenRemote() ? "" : "disabled"}>
+          <i data-lucide="folder-open"></i><span>Otwórz</span>
+        </button>
         <button class="tool-button" type="button" data-action="download" title="Pobierz z poda" ${canDownload() ? "" : "disabled"}>
           <i data-lucide="download"></i><span>Pobierz</span>
         </button>
@@ -2059,6 +2119,9 @@ function renderLocalPanel(): string {
         ${renderLocalRows()}
       </div>
       <div class="panel-footer">
+        <button class="tool-button" type="button" data-action="open-local" title="Otwórz zaznaczony element" ${canOpenLocal() ? "" : "disabled"}>
+          <i data-lucide="folder-open"></i><span>Otwórz</span>
+        </button>
         <button class="tool-button" type="button" data-action="upload" title="Wyślij do poda" ${canUpload() ? "" : "disabled"}>
           <i data-lucide="upload"></i><span>Wyślij</span>
         </button>
@@ -2394,15 +2457,22 @@ function renderContextMenu(): string {
   if (!menu) {
     return "";
   }
+  const remoteOpen = menu.panel === "remote" && canOpenRemote();
   const remoteDownload = menu.panel === "remote" && state.remote.level === "remote" && canDownload();
   const remoteDelete = menu.panel === "remote" && canDeleteRemote();
+  const localOpen = menu.panel === "local" && canOpenLocal();
   const localUpload = menu.panel === "local" && canUpload();
   const localDelete = menu.panel === "local" && canDeleteLocal();
-  if (!remoteDownload && !remoteDelete && !localUpload && !localDelete) {
+  if (!remoteOpen && !remoteDownload && !remoteDelete && !localOpen && !localUpload && !localDelete) {
     return "";
   }
   return `
     <div class="context-menu" style="left: ${menu.x}px; top: ${menu.y}px;">
+      ${
+        remoteOpen
+          ? `<button type="button" data-action="open-remote"><i data-lucide="folder-open"></i><span>Otwórz</span></button>`
+          : ""
+      }
       ${
         remoteDownload
           ? `<button type="button" data-action="download"><i data-lucide="download"></i><span>Pobierz</span></button>`
@@ -2411,6 +2481,11 @@ function renderContextMenu(): string {
       ${
         remoteDelete
           ? `<button class="danger-menu-item" type="button" data-action="delete-remote"><i data-lucide="trash-2"></i><span>Usuń</span></button>`
+          : ""
+      }
+      ${
+        localOpen
+          ? `<button type="button" data-action="open-local"><i data-lucide="folder-open"></i><span>Otwórz</span></button>`
           : ""
       }
       ${
@@ -2425,6 +2500,14 @@ function renderContextMenu(): string {
       }
     </div>
   `;
+}
+
+function canOpenRemote(): boolean {
+  return selectedRemoteOpenIndex() !== null && !state.remote.loading && state.activeKubectlActions === 0;
+}
+
+function canOpenLocal(): boolean {
+  return selectedLocalOpenIndex() !== null && !state.local.loading;
 }
 
 function canDownload(): boolean {
@@ -2473,6 +2556,12 @@ function updateSelection(panel: string): void {
 }
 
 function updateActionButtons(): void {
+  app.querySelectorAll<HTMLButtonElement>('[data-action="open-remote"]').forEach((button) => {
+    button.disabled = !canOpenRemote();
+  });
+  app.querySelectorAll<HTMLButtonElement>('[data-action="open-local"]').forEach((button) => {
+    button.disabled = !canOpenLocal();
+  });
   app.querySelectorAll<HTMLButtonElement>('[data-action="download"]').forEach((button) => {
     button.disabled = !canDownload();
   });
