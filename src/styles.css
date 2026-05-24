@@ -150,6 +150,16 @@ button {
   background: var(--control-hover);
 }
 
+.tool-button.danger-button {
+  border-color: var(--danger-border-soft);
+  color: var(--red);
+}
+
+.tool-button.danger-button:hover {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+}
+
 .tool-button:disabled,
 .icon-button:disabled {
   cursor: not-allowed;
@@ -567,6 +577,14 @@ button {
 
 .context-menu button:hover {
   background: var(--surface-hover);
+}
+
+.context-menu button.danger-menu-item {
+  color: var(--red);
+}
+
+.context-menu button.danger-menu-item:hover {
+  background: var(--danger-bg);
 }
 
 .transfer-row.success .transfer-status {

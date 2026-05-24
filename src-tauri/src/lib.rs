@@ -605,6 +605,53 @@ fn join_local_path(base: String, child: String) -> String {
 }
 
 #[tauri::command]
+async fn delete_local_entries(paths: Vec<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if paths.is_empty() {
+            return Ok(());
+        }
+
+        let paths = paths.into_iter().map(PathBuf::from).collect::<Vec<_>>();
+        trash::delete_all(paths).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn delete_remote_entries(target: RemoteTarget, paths: Vec<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || delete_remote_entries_blocking(target, paths))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn delete_remote_entries_blocking(target: RemoteTarget, paths: Vec<String>) -> Result<(), String> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+
+    let mut args = target_base_args(&target);
+    args.push(OsString::from("exec"));
+    args.push(OsString::from(&target.pod));
+    if let Some(container) = target
+        .container
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        args.push(OsString::from("-c"));
+        args.push(OsString::from(container));
+    }
+    args.push(OsString::from("--"));
+    args.push(OsString::from("rm"));
+    args.push(OsString::from("-rf"));
+    args.push(OsString::from("--"));
+    args.extend(paths.into_iter().map(OsString::from));
+
+    run_kubectl_with_timeout(args, kubectl_timeout())?;
+    Ok(())
+}
+
+#[tauri::command]
 async fn copy_remote_to_local(
     target: RemoteTarget,
     remote_path: String,
@@ -1414,6 +1461,8 @@ pub fn run() {
             list_remote_dir,
             list_local_dir,
             join_local_path,
+            delete_local_entries,
+            delete_remote_entries,
             copy_remote_to_local,
             copy_local_to_remote,
             download_remote_to_temp,

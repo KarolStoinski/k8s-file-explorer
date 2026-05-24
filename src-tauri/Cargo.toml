@@ -19,4 +19,5 @@ rfd = "0.17.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2.11", features = [] }
+trash = "5.2.6"
 wait-timeout = "0.2"

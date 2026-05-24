@@ -743,7 +743,14 @@ async function handleKeydown(event: KeyboardEvent): Promise<void> {
 async function runAction(action: string): Promise<void> {
   if (
     (state.remote.loading || state.activeKubectlActions > 0) &&
-    ["refresh-remote", "remote-up", "remote-root", "download", "upload"].includes(action)
+    ["refresh-remote", "remote-up", "remote-root", "download", "upload", "delete-remote"].includes(action)
+  ) {
+    return;
+  }
+
+  if (
+    state.local.loading &&
+    ["refresh-local", "local-up", "local-home", "upload", "delete-local"].includes(action)
   ) {
     return;
   }
@@ -775,6 +782,12 @@ async function runAction(action: string): Promise<void> {
       break;
     case "upload":
       await uploadSelectedLocal();
+      break;
+    case "delete-remote":
+      await deleteSelectedRemote();
+      break;
+    case "delete-local":
+      await deleteSelectedLocal();
       break;
     case "toggle-console":
       state.consoleExpanded = !state.consoleExpanded;
@@ -1693,6 +1706,70 @@ async function uploadSelectedLocal(): Promise<void> {
   }
 }
 
+async function deleteSelectedRemote(): Promise<void> {
+  const entries = selectedRemoteEntries();
+  const target = remoteTarget();
+  if (entries.length === 0 || !target) {
+    return;
+  }
+
+  const confirmed = await nativeConfirm(
+    "Usunąć z poda?",
+    `Usunąć ${describeSelection(entries)} z poda?\n\nTo będzie ostateczne usunięcie. Tej operacji nie można cofnąć.`,
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  const currentPath = state.remote.path;
+  try {
+    await invokeKubectl("delete_remote_entries", {
+      target,
+      paths: entries.map((entry) => entry.path),
+    });
+    remoteDirCache.delete(prefetchKey({ kind: "remote-dir", target, path: currentPath }));
+    await loadRemotePath(currentPath, false);
+  } catch (error) {
+    state.remote.error = formatError(error);
+    render();
+  }
+}
+
+async function deleteSelectedLocal(): Promise<void> {
+  const entries = selectedLocalEntries();
+  if (entries.length === 0) {
+    return;
+  }
+
+  const confirmed = await nativeConfirm(
+    "Przenieść do kosza?",
+    `Czy chcesz przenieść ${describeSelection(entries)} do kosza?`,
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  const currentPath = state.local.path || null;
+  state.local.loading = true;
+  state.local.error = null;
+  render();
+
+  try {
+    await invoke("delete_local_entries", {
+      paths: entries.map((entry) => entry.path),
+    });
+    if (currentPath) {
+      localDirCache.delete(prefetchKey({ kind: "local-dir", path: currentPath }));
+    }
+    await loadLocalDir(currentPath, false, false);
+  } catch (error) {
+    state.local.error = formatError(error);
+  } finally {
+    state.local.loading = false;
+    render();
+  }
+}
+
 async function runUploadTransfer(
   transferId: number,
   target: RemoteTarget,
@@ -1805,6 +1882,19 @@ function localNameExists(name: string): boolean {
 
 function remoteNameExists(name: string): boolean {
   return state.remote.entries.some((entry) => entry.name === name);
+}
+
+function describeSelection(entries: Array<{ name: string }>): string {
+  if (entries.length === 1) {
+    return `element "${entries[0].name}"`;
+  }
+
+  const preview = entries
+    .slice(0, 3)
+    .map((entry) => `"${entry.name}"`)
+    .join(", ");
+  const suffix = entries.length > 3 ? ` i ${entries.length - 3} więcej` : "";
+  return `zaznaczone elementy (${entries.length}): ${preview}${suffix}`;
 }
 
 function addTransfer(direction: TransferDirection, source: string, destination: string): number {
@@ -1920,6 +2010,9 @@ function renderRemotePanel(themeIcon: string, themeTitle: string): string {
         <button class="tool-button" type="button" data-action="download" title="Pobierz z poda" ${canDownload() ? "" : "disabled"}>
           <i data-lucide="download"></i><span>Pobierz</span>
         </button>
+        <button class="tool-button danger-button" type="button" data-action="delete-remote" title="Usuń z poda" ${canDeleteRemote() ? "" : "disabled"}>
+          <i data-lucide="trash-2"></i><span>Usuń</span>
+        </button>
       </div>
     </section>
   `;
@@ -1968,6 +2061,9 @@ function renderLocalPanel(): string {
       <div class="panel-footer">
         <button class="tool-button" type="button" data-action="upload" title="Wyślij do poda" ${canUpload() ? "" : "disabled"}>
           <i data-lucide="upload"></i><span>Wyślij</span>
+        </button>
+        <button class="tool-button danger-button" type="button" data-action="delete-local" title="Przenieś do kosza" ${canDeleteLocal() ? "" : "disabled"}>
+          <i data-lucide="trash-2"></i><span>Usuń</span>
         </button>
       </div>
     </section>
@@ -2299,8 +2395,10 @@ function renderContextMenu(): string {
     return "";
   }
   const remoteDownload = menu.panel === "remote" && state.remote.level === "remote" && canDownload();
+  const remoteDelete = menu.panel === "remote" && canDeleteRemote();
   const localUpload = menu.panel === "local" && canUpload();
-  if (!remoteDownload && !localUpload) {
+  const localDelete = menu.panel === "local" && canDeleteLocal();
+  if (!remoteDownload && !remoteDelete && !localUpload && !localDelete) {
     return "";
   }
   return `
@@ -2311,8 +2409,18 @@ function renderContextMenu(): string {
           : ""
       }
       ${
+        remoteDelete
+          ? `<button class="danger-menu-item" type="button" data-action="delete-remote"><i data-lucide="trash-2"></i><span>Usuń</span></button>`
+          : ""
+      }
+      ${
         localUpload
           ? `<button type="button" data-action="upload"><i data-lucide="upload"></i><span>Wyślij</span></button>`
+          : ""
+      }
+      ${
+        localDelete
+          ? `<button class="danger-menu-item" type="button" data-action="delete-local"><i data-lucide="trash-2"></i><span>Usuń</span></button>`
           : ""
       }
     </div>
@@ -2339,6 +2447,19 @@ function canUpload(): boolean {
   );
 }
 
+function canDeleteRemote(): boolean {
+  return Boolean(
+    selectedRemoteEntries().length > 0 &&
+      remoteTarget() &&
+      !state.remote.loading &&
+      state.activeKubectlActions === 0,
+  );
+}
+
+function canDeleteLocal(): boolean {
+  return selectedLocalEntries().length > 0 && !state.local.loading;
+}
+
 function updateSelection(panel: string): void {
   app.querySelectorAll<HTMLElement>(`.file-row[data-panel="${panel}"]`).forEach((row) => {
     const index = Number(row.dataset.index);
@@ -2352,14 +2473,18 @@ function updateSelection(panel: string): void {
 }
 
 function updateActionButtons(): void {
-  const download = app.querySelector<HTMLButtonElement>('[data-action="download"]');
-  const upload = app.querySelector<HTMLButtonElement>('[data-action="upload"]');
-  if (download) {
-    download.disabled = !canDownload();
-  }
-  if (upload) {
-    upload.disabled = !canUpload();
-  }
+  app.querySelectorAll<HTMLButtonElement>('[data-action="download"]').forEach((button) => {
+    button.disabled = !canDownload();
+  });
+  app.querySelectorAll<HTMLButtonElement>('[data-action="upload"]').forEach((button) => {
+    button.disabled = !canUpload();
+  });
+  app.querySelectorAll<HTMLButtonElement>('[data-action="delete-remote"]').forEach((button) => {
+    button.disabled = !canDeleteRemote();
+  });
+  app.querySelectorAll<HTMLButtonElement>('[data-action="delete-local"]').forEach((button) => {
+    button.disabled = !canDeleteLocal();
+  });
 }
 
 function iconForKind(kind: EntryKind): string {
