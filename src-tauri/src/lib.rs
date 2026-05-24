@@ -14,12 +14,17 @@ use std::{
 };
 use wait_timeout::ChildExt;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 const DEFAULT_KUBECTL_TIMEOUT: Duration = Duration::from_secs(120);
 const KUBECTL_REQUEST_TIMEOUT: &str = "90s";
 const COPY_TIMEOUT: Duration = Duration::from_secs(600);
 const MAX_KUBECONFIG_BYTES: u64 = 10 * 1024 * 1024;
 const KUBECTL_TIMEOUT_ENV: &str = "K8S_FILE_EXPLORER_KUBECTL_TIMEOUT_SECONDS";
 const MAX_KUBECTL_LOGS: usize = 200;
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 static KUBECTL_LOGS: OnceLock<Mutex<Vec<KubectlLogEntry>>> = OnceLock::new();
 static ACTIVE_KUBECTL_OPERATIONS: OnceLock<Mutex<HashMap<u64, u32>>> = OnceLock::new();
@@ -856,11 +861,11 @@ fn unregister_kubectl_operation(operation_id: u64) {
 
 fn kill_process(process_id: u32) -> Result<(), String> {
     let mut command = if cfg!(windows) {
-        let mut command = Command::new("taskkill");
+        let mut command = background_command("taskkill");
         command.args(["/PID", &process_id.to_string(), "/T", "/F"]);
         command
     } else {
-        let mut command = Command::new("kill");
+        let mut command = background_command("kill");
         command.args(["-TERM", &process_id.to_string()]);
         command
     };
@@ -922,7 +927,8 @@ fn run_program(
     operation_id: Option<u64>,
 ) -> Result<ProcessOutput, String> {
     let program_display = program.to_string_lossy();
-    let mut child = Command::new(program)
+    let mut command = background_command(program);
+    let mut child = command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -973,6 +979,20 @@ fn run_program(
         stderr,
     })
 }
+
+fn background_command(program: impl AsRef<OsStr>) -> Command {
+    let mut command = Command::new(program);
+    apply_background_process_options(&mut command);
+    command
+}
+
+#[cfg(windows)]
+fn apply_background_process_options(command: &mut Command) {
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn apply_background_process_options(_command: &mut Command) {}
 
 fn read_pipe<R: Read>(pipe: Option<R>) -> String {
     let Some(mut pipe) = pipe else {
