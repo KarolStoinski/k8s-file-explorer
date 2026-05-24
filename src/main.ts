@@ -1225,6 +1225,8 @@ async function refreshRemote(): Promise<void> {
 }
 
 async function remoteUp(): Promise<void> {
+  state.remote.error = null;
+
   switch (state.remote.level) {
     case "kubeconfigs":
       return;
@@ -1275,6 +1277,8 @@ async function remoteUp(): Promise<void> {
 }
 
 async function openRemoteBreadcrumb(level: string, path: string): Promise<void> {
+  state.remote.error = null;
+
   switch (level) {
     case "root":
       resetRemoteToRoot();
