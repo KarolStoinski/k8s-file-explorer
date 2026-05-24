@@ -813,6 +813,9 @@ async function runAction(action: string): Promise<void> {
     case "delete-local":
       await deleteSelectedLocal();
       break;
+    case "clear-transfers":
+      clearFinishedTransfers();
+      break;
     case "toggle-console":
       state.consoleExpanded = !state.consoleExpanded;
       saveConsoleExpanded(state.consoleExpanded);
@@ -1849,6 +1852,15 @@ async function cancelTransfer(id: number): Promise<void> {
   }
 }
 
+function clearFinishedTransfers(): void {
+  const nextTransfers = state.transfers.filter((entry) => entry.status === "running");
+  if (nextTransfers.length === state.transfers.length) {
+    return;
+  }
+  state.transfers = nextTransfers;
+  render();
+}
+
 async function copyTransferField(id: number, field: string | undefined): Promise<void> {
   if (!Number.isFinite(id) || !isTransferCopyField(field)) {
     return;
@@ -2459,6 +2471,7 @@ function renderBreadcrumbButton(label: string, level: string, path = ""): string
 
 function renderTransfers(): string {
   const gridStyle = `--transfer-columns: ${transferColumnTemplate()};`;
+  const canClearTransfers = state.transfers.some((entry) => entry.status !== "running");
   const rows = state.transfers.length
     ? state.transfers
         .map((entry) => {
@@ -2499,7 +2512,14 @@ function renderTransfers(): string {
         ${renderTransferHeaderCell("", 1)}
         ${renderTransferHeaderCell("Źródło", 2)}
         ${renderTransferHeaderCell("Cel", 3)}
-        ${renderTransferHeaderCell("Info", 4, false)}
+        ${renderTransferHeaderCell(
+          "Info",
+          4,
+          false,
+          `<button class="transfer-clear-button" type="button" data-action="clear-transfers" title="Wyczyść zakończone transfery" aria-label="Wyczyść zakończone transfery" ${canClearTransfers ? "" : "disabled"}>
+            <i data-lucide="list-x"></i>
+          </button>`,
+        )}
       </div>
       <div class="transfer-list" data-scroll-key="transfers">${rows}</div>
     </section>
@@ -2515,10 +2535,11 @@ function renderTransferCopyButton(entry: TransferEntry, field: TransferCopyField
   `;
 }
 
-function renderTransferHeaderCell(label: string, index: number, resizable = true): string {
+function renderTransferHeaderCell(label: string, index: number, resizable = true, action = ""): string {
   return `
     <span class="transfer-header-cell">
       <span>${escapeHtml(label)}</span>
+      ${action}
       ${resizable ? `<button class="transfer-resize-handle" type="button" data-transfer-resize="${index}" title="Zmień szerokość kolumny"></button>` : ""}
     </span>
   `;

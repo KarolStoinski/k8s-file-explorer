@@ -451,8 +451,16 @@ button {
   position: relative;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   min-width: 0;
   height: 100%;
+  gap: 8px;
+}
+
+.transfer-header-cell > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .transfer-resize-handle {
@@ -469,6 +477,32 @@ button {
 
 .transfer-resize-handle:hover {
   background: var(--resize-hover);
+}
+
+.transfer-clear-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--icon-muted);
+  cursor: pointer;
+}
+
+.transfer-clear-button:hover {
+  border-color: var(--border-strong);
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+.transfer-clear-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
 }
 
 .transfer-header {
