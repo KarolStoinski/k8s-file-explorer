@@ -665,13 +665,17 @@ function renderContextMenuInPlace(): void {
 }
 
 async function handleDoubleClick(event: MouseEvent): Promise<void> {
-  if (state.remote.loading || state.activeKubectlActions > 0) {
-    return;
-  }
-
   const target = event.target as HTMLElement;
   const row = target.closest<HTMLElement>("[data-panel][data-index]");
   if (!row) {
+    return;
+  }
+
+  const panel = row.dataset.panel;
+  if (panel === "remote" && (state.remote.loading || state.activeKubectlActions > 0)) {
+    return;
+  }
+  if (panel === "local" && state.local.loading) {
     return;
   }
 
@@ -680,9 +684,9 @@ async function handleDoubleClick(event: MouseEvent): Promise<void> {
     return;
   }
 
-  if (row.dataset.panel === "remote") {
+  if (panel === "remote") {
     await openRemoteIndex(index);
-  } else if (row.dataset.panel === "local") {
+  } else if (panel === "local") {
     await openLocalIndex(index);
   }
 }
