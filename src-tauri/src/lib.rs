@@ -557,8 +557,51 @@ fn list_remote_dir_blocking(
 }
 
 #[tauri::command]
+async fn remote_path_size(target: RemoteTarget, path: String) -> Result<Option<u64>, String> {
+    tauri::async_runtime::spawn_blocking(move || remote_path_size_blocking(target, path))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn remote_path_size_blocking(target: RemoteTarget, path: String) -> Result<Option<u64>, String> {
+    let mut args = target_base_args(&target);
+    args.push(OsString::from("exec"));
+    args.push(OsString::from(&target.pod));
+    if let Some(container) = target
+        .container
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        args.push(OsString::from("-c"));
+        args.push(OsString::from(container));
+    }
+    args.push(OsString::from("--"));
+    args.push(OsString::from("ls"));
+    args.push(OsString::from("-la"));
+    args.push(OsString::from("--"));
+    args.push(OsString::from(&path));
+
+    let output = run_kubectl_output_with_timeout(args, kubectl_timeout())?;
+    if !output.success {
+        if is_missing_container_command_error(&output, "ls") {
+            return Err(missing_container_ls_message(&target, &path));
+        }
+        return Ok(None);
+    }
+
+    Ok(parse_remote_path_size_from_ls(&output.stdout))
+}
+
+#[tauri::command]
 async fn list_local_dir(path: Option<String>) -> Result<LocalDirectory, String> {
     tauri::async_runtime::spawn_blocking(move || list_local_dir_blocking(path))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn local_path_size(path: String) -> Result<Option<u64>, String> {
+    tauri::async_runtime::spawn_blocking(move || local_path_size_blocking(path))
         .await
         .map_err(|error| error.to_string())?
 }
@@ -617,6 +660,38 @@ fn list_local_dir_blocking(path: Option<String>) -> Result<LocalDirectory, Strin
         parent: directory.parent().map(path_to_string),
         entries,
     })
+}
+
+fn local_path_size_blocking(path: String) -> Result<Option<u64>, String> {
+    local_path_size_value(&PathBuf::from(path))
+}
+
+fn local_path_size_value(path: &Path) -> Result<Option<u64>, String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+
+    if metadata.is_file() {
+        return Ok(Some(metadata.len()));
+    }
+    if metadata.is_dir() {
+        return Ok(Some(local_directory_size(path)?));
+    }
+
+    Ok(Some(metadata.len()))
+}
+
+fn local_directory_size(path: &Path) -> Result<u64, String> {
+    let mut size = 0_u64;
+    for entry in fs::read_dir(path).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if let Some(entry_size) = local_path_size_value(&entry.path())? {
+            size = size.saturating_add(entry_size);
+        }
+    }
+    Ok(size)
 }
 
 #[tauri::command]
@@ -1461,6 +1536,33 @@ fn parse_ls_line(line: &str, base_path: &str) -> Option<RemoteFileEntry> {
     })
 }
 
+fn parse_remote_path_size_from_ls(stdout: &str) -> Option<u64> {
+    let mut file_size = None;
+
+    for line in stdout.lines() {
+        if line.trim().is_empty() || line.starts_with("total ") {
+            continue;
+        }
+
+        let (fields, raw_name) = split_ls_fields(line)?;
+        if raw_name == "." || raw_name == ".." {
+            return None;
+        }
+
+        let permissions = &fields[0];
+        if !permissions.starts_with('-') {
+            return None;
+        }
+
+        if file_size.is_some() {
+            return None;
+        }
+        file_size = fields[4].parse::<u64>().ok();
+    }
+
+    file_size
+}
+
 fn split_ls_fields(line: &str) -> Option<(Vec<String>, String)> {
     let bytes = line.as_bytes();
     let mut fields = Vec::with_capacity(8);
@@ -1602,7 +1704,9 @@ pub fn run() {
             list_containers,
             check_container_tar,
             list_remote_dir,
+            remote_path_size,
             list_local_dir,
+            local_path_size,
             join_local_path,
             delete_local_entries,
             delete_remote_entries,

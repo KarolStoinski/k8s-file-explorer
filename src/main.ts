@@ -9,6 +9,7 @@ type RemoteLevel = "kubeconfigs" | "namespaces" | "pods" | "containers" | "remot
 type TransferStatus = "running" | "success" | "failed";
 type TransferDirection = "download" | "upload" | "temp";
 type TransferCopyField = "source" | "destination" | "info";
+type TransferProgressMode = "measured" | "estimated" | "unknown";
 type ThemeMode = "light" | "dark";
 
 interface ToolStatus {
@@ -94,6 +95,10 @@ interface TransferEntry {
   error: string | null;
   startedAt: number;
   finishedAt: number | null;
+  totalBytes: number | null;
+  transferredBytes: number | null;
+  progressMode: TransferProgressMode;
+  progressUpdatedAt: number | null;
 }
 
 interface KubectlLogEntry {
@@ -193,6 +198,8 @@ const WINDOW_POSITION_STORAGE_KEY = "k8s-file-explorer-window-position";
 const WINDOW_MAXIMIZED_STORAGE_KEY = "k8s-file-explorer-window-maximized";
 const MIN_WINDOW_WIDTH = 1000;
 const MIN_WINDOW_HEIGHT = 680;
+const TRANSFER_PROGRESS_POLL_MS = 800;
+const DEFAULT_ESTIMATED_TRANSFER_BYTES_PER_MS = (4 * 1024 * 1024) / 1000;
 
 const state: AppState = {
   kubectl: null,
@@ -242,6 +249,7 @@ let copiedKubectlLogId: number | null = null;
 let copiedKubectlLogTimer: number | null = null;
 let copiedTransferCell: { id: number; field: TransferCopyField } | null = null;
 let copiedTransferTimer: number | null = null;
+let estimatedTransferBytesPerMs: number | null = null;
 
 const PREFETCH_DELAY_MS = 200;
 const namespaceCache = new Map<string, NamespaceEntry[]>();
@@ -287,6 +295,10 @@ void init();
 
 window.setInterval(() => {
   void loadKubectlLogs();
+}, 1000);
+
+window.setInterval(() => {
+  refreshRunningTransferEstimates();
 }, 1000);
 
 async function init(): Promise<void> {
@@ -1373,7 +1385,7 @@ async function openRemoteEntry(index: number): Promise<void> {
     return;
   }
 
-  const transferId = addTransfer("temp", entry.path, "temp");
+  const transferId = addTransfer("temp", entry.path, "temp", entry.size, entry.size === null ? "unknown" : "estimated");
   try {
     const result = await invoke<TempDownloadResult>("download_remote_to_temp", {
       target,
@@ -1710,7 +1722,8 @@ async function downloadSelectedRemote(): Promise<void> {
       continue;
     }
 
-    const transferId = addTransfer("download", entry.path, destination);
+    const transferId = addTransfer("download", entry.path, destination, entry.size, entry.size === null ? "unknown" : "measured");
+    void monitorLocalTransferProgress(transferId, destination);
     void runDownloadTransfer(transferId, target, entry, destination);
   }
 }
@@ -1755,7 +1768,18 @@ async function uploadSelectedLocal(): Promise<void> {
       continue;
     }
 
-    const transferId = addTransfer("upload", entry.path, destination);
+    const isFileUpload = entry.kind === "file";
+    const transferId = addTransfer(
+      "upload",
+      entry.path,
+      destination,
+      entry.size,
+      isFileUpload ? "measured" : entry.size === null ? "unknown" : "estimated",
+    );
+    if (entry.size === null) {
+      void loadTransferTotalBytes(transferId, entry.path, isFileUpload ? "measured" : "estimated");
+    }
+    void monitorRemoteTransferProgress(transferId, target, destination);
     void runUploadTransfer(transferId, target, entry, destination);
   }
 }
@@ -2077,7 +2101,13 @@ function describeSelection(entries: Array<{ name: string }>): string {
   return t("selection.multiple", { count: entries.length, preview, suffix });
 }
 
-function addTransfer(direction: TransferDirection, source: string, destination: string): number {
+function addTransfer(
+  direction: TransferDirection,
+  source: string,
+  destination: string,
+  totalBytes: number | null = null,
+  progressMode: TransferProgressMode = "unknown",
+): number {
   const id = state.nextTransferId++;
   state.transfers.unshift({
     id,
@@ -2088,6 +2118,10 @@ function addTransfer(direction: TransferDirection, source: string, destination: 
     error: null,
     startedAt: Date.now(),
     finishedAt: null,
+    totalBytes,
+    transferredBytes: totalBytes === null ? null : 0,
+    progressMode,
+    progressUpdatedAt: null,
   });
   state.transfers = state.transfers.slice(0, 50);
   render();
@@ -2108,7 +2142,156 @@ function updateTransfer(
   transfer.destination = destination;
   transfer.error = error;
   transfer.finishedAt = Date.now();
+  if (status === "success" && transfer.totalBytes !== null) {
+    transfer.transferredBytes = transfer.totalBytes;
+    transfer.progressMode = "measured";
+    transfer.progressUpdatedAt = Date.now();
+  }
+  if (status === "success") {
+    recordCompletedTransferSpeed(transfer);
+  }
   render();
+}
+
+async function monitorLocalTransferProgress(id: number, path: string): Promise<void> {
+  while (isTransferRunning(id)) {
+    await delay(TRANSFER_PROGRESS_POLL_MS);
+    if (!isTransferRunning(id)) {
+      return;
+    }
+
+    try {
+      const bytes = await invoke<number | null>("local_path_size", { path });
+      if (bytes !== null) {
+        updateTransferProgress(id, bytes, null, "measured");
+      }
+    } catch {
+      return;
+    }
+  }
+}
+
+async function monitorRemoteTransferProgress(id: number, target: RemoteTarget, path: string): Promise<void> {
+  while (isTransferRunning(id)) {
+    await delay(TRANSFER_PROGRESS_POLL_MS);
+    if (!isTransferRunning(id)) {
+      return;
+    }
+
+    try {
+      const bytes = await invoke<number | null>("remote_path_size", { target, path });
+      if (bytes !== null) {
+        updateTransferProgress(id, bytes, null, "measured");
+      }
+    } catch {
+      return;
+    }
+  }
+}
+
+async function loadTransferTotalBytes(id: number, path: string, mode: TransferProgressMode): Promise<void> {
+  try {
+    const totalBytes = await invoke<number | null>("local_path_size", { path });
+    if (totalBytes !== null) {
+      updateTransferProgress(id, null, totalBytes, mode);
+    }
+  } catch {
+    return;
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function isTransferRunning(id: number): boolean {
+  return state.transfers.some((entry) => entry.id === id && entry.status === "running");
+}
+
+function updateTransferProgress(
+  id: number,
+  transferredBytes: number | null,
+  totalBytes: number | null,
+  mode: TransferProgressMode,
+): void {
+  const transfer = state.transfers.find((item) => item.id === id);
+  if (!transfer || transfer.status !== "running") {
+    return;
+  }
+  if (totalBytes !== null) {
+    transfer.totalBytes = totalBytes;
+  }
+  if (transferredBytes !== null) {
+    const current = transfer.transferredBytes ?? 0;
+    transfer.transferredBytes = Math.max(current, transferredBytes);
+  }
+  transfer.progressMode = mode;
+  transfer.progressUpdatedAt = Date.now();
+  updateTransferRuntimeViews();
+}
+
+function refreshRunningTransferEstimates(): void {
+  let hasRunningTransfers = false;
+  for (const transfer of state.transfers) {
+    if (transfer.status !== "running") {
+      continue;
+    }
+
+    hasRunningTransfers = true;
+    if (transfer.progressMode !== "estimated" || transfer.totalBytes === null) {
+      continue;
+    }
+
+    const estimatedBytes = estimatedTransferredBytes(transfer);
+    if (estimatedBytes !== null) {
+      transfer.transferredBytes = Math.max(transfer.transferredBytes ?? 0, estimatedBytes);
+      transfer.progressUpdatedAt = Date.now();
+    }
+  }
+
+  if (hasRunningTransfers) {
+    updateTransferRuntimeViews();
+  }
+}
+
+function estimatedTransferredBytes(transfer: TransferEntry): number | null {
+  if (transfer.totalBytes === null) {
+    return null;
+  }
+
+  const elapsedMs = Math.max(0, Date.now() - transfer.startedAt);
+  const bytesPerMs = estimatedTransferBytesPerMs ?? DEFAULT_ESTIMATED_TRANSFER_BYTES_PER_MS;
+  return Math.min(transfer.totalBytes * 0.95, elapsedMs * bytesPerMs);
+}
+
+function recordCompletedTransferSpeed(transfer: TransferEntry): void {
+  const elapsedMs = Math.max(1, (transfer.finishedAt ?? Date.now()) - transfer.startedAt);
+  const bytes = transfer.totalBytes ?? transfer.transferredBytes;
+  if (!bytes || elapsedMs < 500) {
+    return;
+  }
+
+  const bytesPerMs = bytes / elapsedMs;
+  estimatedTransferBytesPerMs =
+    estimatedTransferBytesPerMs === null ? bytesPerMs : estimatedTransferBytesPerMs * 0.7 + bytesPerMs * 0.3;
+}
+
+function updateTransferRuntimeViews(): void {
+  const transferPanel = app.querySelector<HTMLElement>(".transfer-panel");
+  if (!transferPanel) {
+    render();
+    return;
+  }
+
+  const transferList = transferPanel.querySelector<HTMLElement>("[data-scroll-key='transfers']");
+  const scrollTop = transferList?.scrollTop ?? 0;
+  transferPanel.outerHTML = renderTransfers();
+  const nextTransferList = app.querySelector<HTMLElement>("[data-scroll-key='transfers']");
+  if (nextTransferList) {
+    nextTransferList.scrollTop = scrollTop;
+  }
+  createIcons({ icons });
+  updateTransferColumnStyles();
 }
 
 function render(): void {
@@ -2509,7 +2692,7 @@ function renderTransfers(): string {
                 <span class="truncate" title="${escapeAttr(info)}">${escapeHtml(info)}</span>
                 ${renderTransferCopyButton(entry, "info")}
                 ${entry.status === "running" ? `<button class="cancel-transfer-button" type="button" data-action="cancel-transfer" data-transfer-id="${entry.id}" title="${escapeAttr(t("transfer.cancelTitle"))}">${escapeHtml(t("transfer.cancel"))}</button>` : ""}
-                ${entry.status === "running" ? `<span class="copy-progress" aria-hidden="true"></span>` : ""}
+                ${renderTransferProgress(entry)}
               </span>
             </div>
           `;
@@ -2535,6 +2718,23 @@ function renderTransfers(): string {
       </div>
       <div class="transfer-list" data-scroll-key="transfers">${rows}</div>
     </section>
+  `;
+}
+
+function renderTransferProgress(entry: TransferEntry): string {
+  if (entry.status !== "running") {
+    return "";
+  }
+
+  const percent = transferProgressPercent(entry);
+  if (percent === null) {
+    return `<span class="transfer-progress indeterminate" aria-hidden="true"></span>`;
+  }
+
+  return `
+    <span class="transfer-progress" aria-hidden="true">
+      <span class="transfer-progress-fill" style="width: ${percent.toFixed(1)}%;"></span>
+    </span>
   `;
 }
 
@@ -2839,12 +3039,109 @@ function formatLocalDate(value: number | null): string {
 
 function elapsedLabel(entry: TransferEntry): string {
   const end = entry.finishedAt ?? Date.now();
-  const seconds = Math.max(0, Math.round((end - entry.startedAt) / 1000));
-  return seconds <= 1 ? "1 s" : `${seconds} s`;
+  return formatDuration(end - entry.startedAt);
 }
 
 function transferInfoLabel(entry: TransferEntry): string {
-  return entry.error ?? elapsedLabel(entry);
+  if (entry.error) {
+    return entry.error;
+  }
+
+  const progress = transferProgressFraction(entry);
+  const transferredBytes = effectiveTransferredBytes(entry);
+  const parts: string[] = [];
+
+  if (progress !== null) {
+    const prefix = entry.progressMode === "estimated" && entry.status === "running" ? "~" : "";
+    parts.push(`${prefix}${Math.round(progress * 100)}%`);
+  }
+
+  if (entry.totalBytes !== null && transferredBytes !== null) {
+    parts.push(t("transfer.sizeOf", {
+      done: formatBytes(Math.min(transferredBytes, entry.totalBytes)),
+      total: formatBytes(entry.totalBytes),
+    }));
+  } else if (transferredBytes !== null) {
+    parts.push(t("transfer.sizeCopied", { bytes: formatBytes(transferredBytes) }));
+  }
+
+  const remaining = transferRemainingLabel(entry, transferredBytes);
+  if (entry.status === "running" && remaining) {
+    parts.push(remaining);
+  } else {
+    parts.push(t("transfer.elapsed", { time: elapsedLabel(entry) }));
+  }
+
+  return parts.join(" | ");
+}
+
+function transferProgressPercent(entry: TransferEntry): number | null {
+  const fraction = transferProgressFraction(entry);
+  return fraction === null ? null : fraction * 100;
+}
+
+function transferProgressFraction(entry: TransferEntry): number | null {
+  if (entry.totalBytes === null || entry.totalBytes <= 0) {
+    return null;
+  }
+
+  const transferredBytes = effectiveTransferredBytes(entry);
+  if (transferredBytes === null) {
+    return null;
+  }
+
+  const fraction = transferredBytes / entry.totalBytes;
+  const max = entry.status === "running" ? 0.99 : 1;
+  return Math.max(0, Math.min(max, fraction));
+}
+
+function effectiveTransferredBytes(entry: TransferEntry): number | null {
+  if (entry.transferredBytes !== null) {
+    return entry.transferredBytes;
+  }
+  if (entry.status === "running" && entry.progressMode === "estimated") {
+    return estimatedTransferredBytes(entry);
+  }
+  return null;
+}
+
+function transferRemainingLabel(entry: TransferEntry, transferredBytes: number | null): string | null {
+  if (entry.totalBytes === null || transferredBytes === null || transferredBytes <= 0) {
+    return null;
+  }
+
+  const elapsedMs = Math.max(1, Date.now() - entry.startedAt);
+  const bytesPerMs =
+    entry.progressMode === "estimated"
+      ? (estimatedTransferBytesPerMs ?? DEFAULT_ESTIMATED_TRANSFER_BYTES_PER_MS)
+      : transferredBytes / elapsedMs;
+  if (!Number.isFinite(bytesPerMs) || bytesPerMs <= 0) {
+    return null;
+  }
+
+  const remainingBytes = Math.max(0, entry.totalBytes - transferredBytes);
+  if (remainingBytes <= 0) {
+    return null;
+  }
+
+  return t("transfer.remaining", { time: formatDuration(remainingBytes / bytesPerMs) });
+}
+
+function formatDuration(valueMs: number): string {
+  const seconds = Math.max(1, Math.round(valueMs / 1000));
+  if (seconds < 60) {
+    return `${seconds} s`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes < 60) {
+    return remainingSeconds === 0 ? `${minutes} min` : `${minutes} min ${remainingSeconds} s`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes === 0 ? `${hours} h` : `${hours} h ${remainingMinutes} min`;
 }
 
 function transferStatusLabel(status: TransferStatus): string {

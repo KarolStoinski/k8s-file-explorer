@@ -605,7 +605,7 @@ button {
   background: var(--danger-hover);
 }
 
-.copy-progress {
+.transfer-progress {
   position: absolute;
   right: 12px;
   bottom: 2px;
@@ -616,14 +616,23 @@ button {
   background: var(--progress-bg);
 }
 
-.copy-progress::after {
+.transfer-progress-fill,
+.transfer-progress.indeterminate::after {
   display: block;
-  width: 36%;
   height: 100%;
   border-radius: inherit;
   background: var(--blue);
-  animation: progress-slide 1.2s ease-in-out infinite;
   content: "";
+}
+
+.transfer-progress-fill {
+  width: 0;
+  transition: width 180ms ease;
+}
+
+.transfer-progress.indeterminate::after {
+  width: 36%;
+  animation: progress-slide 1.2s ease-in-out infinite;
 }
 
 .context-menu {
