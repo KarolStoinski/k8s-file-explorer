@@ -149,6 +149,12 @@ struct ProcessOutput {
     stderr: String,
 }
 
+#[derive(Debug)]
+struct LocalKubectlCpArg {
+    arg: OsString,
+    current_dir: Option<PathBuf>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct KubectlLogEntry {
@@ -169,7 +175,7 @@ fn check_kubectl() -> ToolStatus {
     let args = kubectl_args_with_request_timeout(os_args(["version", "--client", "-o", "json"]));
     let program = kubectl_program();
 
-    match run_logged_kubectl_program(&program, &args, kubectl_timeout(), None) {
+    match run_logged_kubectl_program(&program, &args, kubectl_timeout(), None, None) {
         Ok(output) if output.success => {
             let version = serde_json::from_str::<Value>(&output.stdout)
                 .ok()
@@ -618,6 +624,7 @@ fn copy_remote_to_local_blocking(
     local_path: String,
     operation_id: Option<u64>,
 ) -> Result<TransferResult, String> {
+    let local = local_kubectl_cp_arg(&local_path)?;
     let mut args = target_base_args(&target);
     args.push(OsString::from("cp"));
     if let Some(container) = target
@@ -629,9 +636,14 @@ fn copy_remote_to_local_blocking(
         args.push(OsString::from(container));
     }
     args.push(OsString::from(format!("{}:{remote_path}", target.pod)));
-    args.push(OsString::from(&local_path));
+    args.push(local.arg);
 
-    run_kubectl_with_timeout_and_operation(args, COPY_TIMEOUT, operation_id)?;
+    run_kubectl_with_timeout_operation_and_dir(
+        args,
+        COPY_TIMEOUT,
+        operation_id,
+        local.current_dir.as_deref(),
+    )?;
     Ok(TransferResult {
         source: remote_path,
         destination: local_path,
@@ -659,6 +671,7 @@ fn copy_local_to_remote_blocking(
     remote_path: String,
     operation_id: Option<u64>,
 ) -> Result<TransferResult, String> {
+    let local = local_kubectl_cp_arg(&local_path)?;
     let mut args = target_base_args(&target);
     args.push(OsString::from("cp"));
     if let Some(container) = target
@@ -669,10 +682,15 @@ fn copy_local_to_remote_blocking(
         args.push(OsString::from("-c"));
         args.push(OsString::from(container));
     }
-    args.push(OsString::from(&local_path));
+    args.push(local.arg);
     args.push(OsString::from(format!("{}:{remote_path}", target.pod)));
 
-    run_kubectl_with_timeout_and_operation(args, COPY_TIMEOUT, operation_id)?;
+    run_kubectl_with_timeout_operation_and_dir(
+        args,
+        COPY_TIMEOUT,
+        operation_id,
+        local.current_dir.as_deref(),
+    )?;
     Ok(TransferResult {
         source: local_path,
         destination: remote_path,
@@ -750,7 +768,7 @@ fn run_kubectl_output_with_timeout(
 ) -> Result<ProcessOutput, String> {
     let program = kubectl_program();
     let args = kubectl_args_with_request_timeout(args);
-    run_logged_kubectl_program(&program, &args, timeout, None)
+    run_logged_kubectl_program(&program, &args, timeout, None, None)
 }
 
 fn run_kubectl_with_timeout_and_operation(
@@ -758,9 +776,18 @@ fn run_kubectl_with_timeout_and_operation(
     timeout: Duration,
     operation_id: Option<u64>,
 ) -> Result<String, String> {
+    run_kubectl_with_timeout_operation_and_dir(args, timeout, operation_id, None)
+}
+
+fn run_kubectl_with_timeout_operation_and_dir(
+    args: Vec<OsString>,
+    timeout: Duration,
+    operation_id: Option<u64>,
+    current_dir: Option<&Path>,
+) -> Result<String, String> {
     let program = kubectl_program();
     let args = kubectl_args_with_request_timeout(args);
-    let output = run_logged_kubectl_program(&program, &args, timeout, operation_id)?;
+    let output = run_logged_kubectl_program(&program, &args, timeout, operation_id, current_dir)?;
     if output.success {
         Ok(output.stdout)
     } else {
@@ -773,8 +800,9 @@ fn run_logged_kubectl_program(
     args: &[OsString],
     timeout: Duration,
     operation_id: Option<u64>,
+    current_dir: Option<&Path>,
 ) -> Result<ProcessOutput, String> {
-    let command = format_command(program, args);
+    let command = format_command_with_dir(program, args, current_dir);
     let id = NEXT_KUBECTL_LOG_ID.fetch_add(1, Ordering::Relaxed);
     let started_at = now_millis();
     let started = std::time::Instant::now();
@@ -791,12 +819,12 @@ fn run_logged_kubectl_program(
         finished: false,
     });
 
-    let output = match run_program(program, args, timeout, operation_id) {
+    let output = match run_program(program, args, timeout, operation_id, current_dir) {
         Ok(output) => output,
         Err(error) => {
             update_kubectl_log(KubectlLogEntry {
                 id,
-                command: format_command(program, args),
+                command: format_command_with_dir(program, args, current_dir),
                 success: false,
                 code: None,
                 stdout: String::new(),
@@ -812,7 +840,7 @@ fn run_logged_kubectl_program(
 
     update_kubectl_log(KubectlLogEntry {
         id,
-        command: format_command(program, args),
+        command: format_command_with_dir(program, args, current_dir),
         success: output.success,
         code: output.code,
         stdout: output.stdout.clone(),
@@ -898,6 +926,18 @@ fn format_command(program: &OsStr, args: &[OsString]) -> String {
         .join(" ")
 }
 
+fn format_command_with_dir(
+    program: &OsStr,
+    args: &[OsString],
+    current_dir: Option<&Path>,
+) -> String {
+    let command = format_command(program, args);
+    match current_dir {
+        Some(current_dir) => format!("cwd={} {}", quote_arg(current_dir.as_os_str()), command),
+        None => command,
+    }
+}
+
 fn quote_arg(value: &OsStr) -> String {
     let value = value.to_string_lossy();
     if value.is_empty() {
@@ -933,9 +973,13 @@ fn run_program(
     args: &[OsString],
     timeout: Duration,
     operation_id: Option<u64>,
+    current_dir: Option<&Path>,
 ) -> Result<ProcessOutput, String> {
     let program_display = program.to_string_lossy();
     let mut command = background_command(program);
+    if let Some(current_dir) = current_dir {
+        command.current_dir(current_dir);
+    }
     let mut child = command
         .args(args)
         .stdin(Stdio::null())
@@ -1062,6 +1106,28 @@ fn missing_container_ls_message(target: &RemoteTarget, path: &str) -> String {
         "Nie można wyświetlić katalogu `{path}`.\n\
          {scope} nie ma programu `ls`, którego aplikacja używa do listowania plików.",
     )
+}
+
+fn local_kubectl_cp_arg(local_path: &str) -> Result<LocalKubectlCpArg, String> {
+    let path = PathBuf::from(local_path);
+    if !path.is_absolute() {
+        return Ok(LocalKubectlCpArg {
+            arg: OsString::from(local_path),
+            current_dir: None,
+        });
+    }
+
+    let file_name = path.file_name().ok_or_else(|| {
+        "Nie można użyć głównego katalogu dysku jako lokalnej ścieżki transferu.".to_string()
+    })?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("Nie można ustalić katalogu nadrzędnego dla `{local_path}`."))?;
+
+    Ok(LocalKubectlCpArg {
+        arg: file_name.to_os_string(),
+        current_dir: Some(parent.to_path_buf()),
+    })
 }
 
 fn os_args<const N: usize>(args: [&str; N]) -> Vec<OsString> {
