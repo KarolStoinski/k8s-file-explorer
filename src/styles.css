@@ -508,6 +508,49 @@ button {
   gap: 8px;
 }
 
+.transfer-copy-cell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+}
+
+.transfer-copy-cell .truncate {
+  flex: 1 1 auto;
+}
+
+.transfer-copy-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--icon-muted);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.transfer-row:hover .transfer-copy-button,
+.transfer-copy-button:focus-visible,
+.transfer-copy-button.copied {
+  opacity: 0.55;
+  pointer-events: auto;
+}
+
+.transfer-copy-button:hover,
+.transfer-copy-button.copied {
+  border-color: var(--border-strong);
+  background: var(--control-hover);
+  color: var(--text);
+  opacity: 0.95;
+}
+
 .transfer-info .truncate {
   flex: 1 1 auto;
 }

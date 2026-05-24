@@ -7,6 +7,7 @@ type EntryKind = "file" | "directory" | "symlink" | "unknown";
 type RemoteLevel = "kubeconfigs" | "namespaces" | "pods" | "containers" | "remote";
 type TransferStatus = "running" | "success" | "failed";
 type TransferDirection = "download" | "upload" | "temp";
+type TransferCopyField = "source" | "destination" | "info";
 type ThemeMode = "light" | "dark";
 
 interface ToolStatus {
@@ -237,6 +238,8 @@ let hoverPrefetchKey: string | null = null;
 let windowPlacementSaveTimer: number | null = null;
 let copiedKubectlLogId: number | null = null;
 let copiedKubectlLogTimer: number | null = null;
+let copiedTransferCell: { id: number; field: TransferCopyField } | null = null;
+let copiedTransferTimer: number | null = null;
 
 const PREFETCH_DELAY_MS = 200;
 const namespaceCache = new Map<string, NamespaceEntry[]>();
@@ -408,6 +411,10 @@ async function handleClick(event: MouseEvent): Promise<void> {
     }
     if (action.dataset.action === "cancel-transfer") {
       await cancelTransfer(Number(action.dataset.transferId));
+      return;
+    }
+    if (action.dataset.action === "copy-transfer-field") {
+      await copyTransferField(Number(action.dataset.transferId), action.dataset.transferField);
       return;
     }
     if (action.dataset.action === "copy-kubectl-message") {
@@ -1837,6 +1844,34 @@ async function cancelTransfer(id: number): Promise<void> {
   }
 }
 
+async function copyTransferField(id: number, field: string | undefined): Promise<void> {
+  if (!Number.isFinite(id) || !isTransferCopyField(field)) {
+    return;
+  }
+
+  const transfer = state.transfers.find((item) => item.id === id);
+  if (!transfer) {
+    return;
+  }
+
+  try {
+    await writeClipboardText(transferCopyValue(transfer, field));
+    copiedTransferCell = { id, field };
+    render();
+    if (copiedTransferTimer !== null) {
+      window.clearTimeout(copiedTransferTimer);
+    }
+    copiedTransferTimer = window.setTimeout(() => {
+      copiedTransferCell = null;
+      copiedTransferTimer = null;
+      render();
+    }, 1500);
+  } catch (error) {
+    state.bootError = formatError(error);
+    render();
+  }
+}
+
 async function copyKubectlMessage(id: number): Promise<void> {
   if (!Number.isFinite(id)) {
     return;
@@ -2424,14 +2459,25 @@ function renderTransfers(): string {
         .map((entry) => {
           const icon = entry.status === "running" ? "loader" : entry.status === "success" ? "check" : "circle-x";
           const direction = entry.direction === "upload" ? "upload" : entry.direction === "download" ? "download" : "file-down";
+          const info = transferInfoLabel(entry);
           return `
             <div class="transfer-row ${entry.status}" style="${gridStyle}">
-              <span class="transfer-status"><i data-lucide="${icon}"></i>${escapeHtml(entry.status)}</span>
+              <span class="transfer-status">
+                <i data-lucide="${icon}"></i>
+                <span class="truncate" title="${escapeAttr(entry.status)}">${escapeHtml(entry.status)}</span>
+              </span>
               <span><i data-lucide="${direction}"></i></span>
-              <span class="truncate" title="${escapeAttr(entry.source)}">${escapeHtml(entry.source)}</span>
-              <span class="truncate" title="${escapeAttr(entry.destination)}">${escapeHtml(entry.destination)}</span>
-              <span class="transfer-info">
-                <span class="truncate" title="${escapeAttr(entry.error ?? elapsedLabel(entry))}">${escapeHtml(entry.error ?? elapsedLabel(entry))}</span>
+              <span class="transfer-copy-cell">
+                <span class="truncate" title="${escapeAttr(entry.source)}">${escapeHtml(entry.source)}</span>
+                ${renderTransferCopyButton(entry, "source")}
+              </span>
+              <span class="transfer-copy-cell">
+                <span class="truncate" title="${escapeAttr(entry.destination)}">${escapeHtml(entry.destination)}</span>
+                ${renderTransferCopyButton(entry, "destination")}
+              </span>
+              <span class="transfer-info transfer-copy-cell">
+                <span class="truncate" title="${escapeAttr(info)}">${escapeHtml(info)}</span>
+                ${renderTransferCopyButton(entry, "info")}
                 ${entry.status === "running" ? `<button class="cancel-transfer-button" type="button" data-action="cancel-transfer" data-transfer-id="${entry.id}" title="Anuluj transfer">Anuluj</button>` : ""}
                 ${entry.status === "running" ? `<span class="copy-progress" aria-hidden="true"></span>` : ""}
               </span>
@@ -2452,6 +2498,15 @@ function renderTransfers(): string {
       </div>
       <div class="transfer-list" data-scroll-key="transfers">${rows}</div>
     </section>
+  `;
+}
+
+function renderTransferCopyButton(entry: TransferEntry, field: TransferCopyField): string {
+  const copied = copiedTransferCell?.id === entry.id && copiedTransferCell.field === field;
+  return `
+    <button class="transfer-copy-button ${copied ? "copied" : ""}" type="button" data-action="copy-transfer-field" data-transfer-id="${entry.id}" data-transfer-field="${field}" title="${copied ? "Skopiowano" : "Kopiuj"}" aria-label="${copied ? "Skopiowano" : "Kopiuj"}">
+      <i data-lucide="${copied ? "check" : "copy"}"></i>
+    </button>
   `;
 }
 
@@ -2719,6 +2774,25 @@ function elapsedLabel(entry: TransferEntry): string {
   const end = entry.finishedAt ?? Date.now();
   const seconds = Math.max(0, Math.round((end - entry.startedAt) / 1000));
   return seconds <= 1 ? "1 s" : `${seconds} s`;
+}
+
+function transferInfoLabel(entry: TransferEntry): string {
+  return entry.error ?? elapsedLabel(entry);
+}
+
+function isTransferCopyField(value: string | undefined): value is TransferCopyField {
+  return value === "source" || value === "destination" || value === "info";
+}
+
+function transferCopyValue(entry: TransferEntry, field: TransferCopyField): string {
+  switch (field) {
+    case "source":
+      return entry.source;
+    case "destination":
+      return entry.destination;
+    case "info":
+      return transferInfoLabel(entry);
+  }
 }
 
 function kubectlLogStatus(entry: KubectlLogEntry): string {
