@@ -6,3 +6,4 @@ src-tauri/gen/
 *.tmp
 /.idea/
 *.iml
+LOCAL_TODO.md

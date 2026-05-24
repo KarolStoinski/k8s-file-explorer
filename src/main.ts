@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { availableMonitors, getCurrentWindow, LogicalSize, PhysicalPosition, type Monitor } from "@tauri-apps/api/window";
 import { createIcons, icons } from "lucide";
 import "./styles.css";
 
@@ -106,6 +107,16 @@ interface KubectlLogEntry {
   finished: boolean;
 }
 
+interface StoredWindowSize {
+  width: number;
+  height: number;
+}
+
+interface StoredWindowPosition {
+  x: number;
+  y: number;
+}
+
 interface RemoteState {
   level: RemoteLevel;
   kubeconfigs: KubeconfigEntry[];
@@ -174,6 +185,11 @@ const app: HTMLDivElement = appRoot;
 const THEME_STORAGE_KEY = "k8s-file-explorer-theme";
 const CONSOLE_STORAGE_KEY = "k8s-file-explorer-console";
 const LOCAL_PATH_STORAGE_KEY = "k8s-file-explorer-local-path";
+const WINDOW_SIZE_STORAGE_KEY = "k8s-file-explorer-window-size";
+const WINDOW_POSITION_STORAGE_KEY = "k8s-file-explorer-window-position";
+const WINDOW_MAXIMIZED_STORAGE_KEY = "k8s-file-explorer-window-maximized";
+const MIN_WINDOW_WIDTH = 1000;
+const MIN_WINDOW_HEIGHT = 680;
 
 const state: AppState = {
   kubectl: null,
@@ -218,6 +234,7 @@ const state: AppState = {
 let activeTransferResize: { index: number; startX: number; startWidth: number } | null = null;
 let hoverPrefetchTimer: number | null = null;
 let hoverPrefetchKey: string | null = null;
+let windowPlacementSaveTimer: number | null = null;
 
 const PREFETCH_DELAY_MS = 200;
 const namespaceCache = new Map<string, NamespaceEntry[]>();
@@ -266,6 +283,8 @@ window.setInterval(() => {
 }, 1000);
 
 async function init(): Promise<void> {
+  await restoreWindowPlacement();
+  registerWindowPlacementPersistence();
   render();
 
   try {
@@ -796,6 +815,229 @@ function initialLocalPath(): string | null {
 
 function saveLocalPath(path: string): void {
   window.localStorage.setItem(LOCAL_PATH_STORAGE_KEY, path);
+}
+
+async function restoreWindowPlacement(): Promise<void> {
+  if (!isTauriRuntime()) {
+    return;
+  }
+  const shouldMaximize = storedWindowMaximized();
+  await restoreWindowSize();
+  await restoreWindowPosition();
+  if (shouldMaximize) {
+    await restoreWindowMaximized();
+  }
+}
+
+async function restoreWindowSize(): Promise<void> {
+  const size = storedWindowSize();
+  if (!size) {
+    return;
+  }
+
+  try {
+    await getCurrentWindow().setSize(new LogicalSize(size.width, size.height));
+  } catch {
+    // Window size persistence is a convenience feature; startup should continue if it fails.
+  }
+}
+
+async function restoreWindowPosition(): Promise<void> {
+  const position = storedWindowPosition();
+  if (!position) {
+    return;
+  }
+
+  try {
+    const appWindow = getCurrentWindow();
+    const [outerSize, monitors] = await Promise.all([appWindow.outerSize(), availableMonitors()]);
+    if (windowFitsInAnyWorkArea(position, outerSize, monitors)) {
+      await appWindow.setPosition(new PhysicalPosition(position.x, position.y));
+    } else if (windowAlmostFillsAnyWorkArea(outerSize, monitors)) {
+      await appWindow.maximize();
+    }
+  } catch {
+    // If monitor data or positioning is unavailable, keep the platform default position.
+  }
+}
+
+async function restoreWindowMaximized(): Promise<void> {
+  try {
+    await getCurrentWindow().maximize();
+  } catch {
+    // Maximized state persistence is a convenience feature; startup should continue if it fails.
+  }
+}
+
+function registerWindowPlacementPersistence(): void {
+  if (!isTauriRuntime()) {
+    return;
+  }
+
+  const appWindow = getCurrentWindow();
+  appWindow
+    .onResized(() => {
+      scheduleWindowPlacementSave();
+    })
+    .catch(() => undefined);
+  appWindow
+    .onMoved(({ payload: position }) => {
+      void saveMovedWindowPosition(position);
+      scheduleWindowPlacementSave();
+    })
+    .catch(() => undefined);
+  window.addEventListener("resize", scheduleWindowPlacementSave);
+  window.addEventListener("beforeunload", saveCurrentWindowPlacement);
+}
+
+function scheduleWindowPlacementSave(): void {
+  if (windowPlacementSaveTimer !== null) {
+    window.clearTimeout(windowPlacementSaveTimer);
+  }
+  windowPlacementSaveTimer = window.setTimeout(() => {
+    windowPlacementSaveTimer = null;
+    saveCurrentWindowPlacement();
+  }, 250);
+}
+
+function saveWindowSize(width: number, height: number): void {
+  const size = normalizedWindowSize(width, height);
+  window.localStorage.setItem(WINDOW_SIZE_STORAGE_KEY, JSON.stringify(size));
+}
+
+function saveCurrentWindowPlacement(): void {
+  void saveCurrentTauriWindowPlacement();
+}
+
+async function saveCurrentTauriWindowPlacement(): Promise<void> {
+  if (!isTauriRuntime()) {
+    saveWindowSize(window.innerWidth, window.innerHeight);
+    return;
+  }
+
+  try {
+    const appWindow = getCurrentWindow();
+    const maximized = await appWindow.isMaximized();
+    saveWindowMaximized(maximized);
+    if (maximized) {
+      return;
+    }
+
+    saveWindowSize(window.innerWidth, window.innerHeight);
+    const position = await appWindow.outerPosition();
+    saveWindowPosition(position.x, position.y);
+  } catch {
+    saveWindowSize(window.innerWidth, window.innerHeight);
+  }
+}
+
+async function saveMovedWindowPosition(position: StoredWindowPosition): Promise<void> {
+  try {
+    const maximized = await getCurrentWindow().isMaximized();
+    saveWindowMaximized(maximized);
+    if (maximized) {
+      return;
+    }
+    saveWindowPosition(position.x, position.y);
+  } catch {
+    saveWindowPosition(position.x, position.y);
+  }
+}
+
+function saveWindowPosition(x: number, y: number): void {
+  const position = normalizedWindowPosition(x, y);
+  window.localStorage.setItem(WINDOW_POSITION_STORAGE_KEY, JSON.stringify(position));
+}
+
+function saveWindowMaximized(maximized: boolean): void {
+  window.localStorage.setItem(WINDOW_MAXIMIZED_STORAGE_KEY, maximized ? "true" : "false");
+}
+
+function storedWindowSize(): StoredWindowSize | null {
+  const stored = window.localStorage.getItem(WINDOW_SIZE_STORAGE_KEY);
+  if (!stored) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(stored) as Partial<StoredWindowSize>;
+    if (!Number.isFinite(parsed.width) || !Number.isFinite(parsed.height)) {
+      return null;
+    }
+    return normalizedWindowSize(Number(parsed.width), Number(parsed.height));
+  } catch {
+    return null;
+  }
+}
+
+function storedWindowPosition(): StoredWindowPosition | null {
+  const stored = window.localStorage.getItem(WINDOW_POSITION_STORAGE_KEY);
+  if (!stored) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(stored) as Partial<StoredWindowPosition>;
+    if (!Number.isFinite(parsed.x) || !Number.isFinite(parsed.y)) {
+      return null;
+    }
+    return normalizedWindowPosition(Number(parsed.x), Number(parsed.y));
+  } catch {
+    return null;
+  }
+}
+
+function storedWindowMaximized(): boolean {
+  return window.localStorage.getItem(WINDOW_MAXIMIZED_STORAGE_KEY) === "true";
+}
+
+function normalizedWindowSize(width: number, height: number): StoredWindowSize {
+  return {
+    width: Math.max(MIN_WINDOW_WIDTH, Math.round(width)),
+    height: Math.max(MIN_WINDOW_HEIGHT, Math.round(height)),
+  };
+}
+
+function normalizedWindowPosition(x: number, y: number): StoredWindowPosition {
+  return {
+    x: Math.round(x),
+    y: Math.round(y),
+  };
+}
+
+function windowFitsInAnyWorkArea(
+  position: StoredWindowPosition,
+  size: StoredWindowSize,
+  monitors: Monitor[],
+): boolean {
+  const windowRight = position.x + size.width;
+  const windowBottom = position.y + size.height;
+
+  return monitors.some((monitor) => {
+    const areaLeft = monitor.workArea.position.x;
+    const areaTop = monitor.workArea.position.y;
+    const areaRight = areaLeft + monitor.workArea.size.width;
+    const areaBottom = areaTop + monitor.workArea.size.height;
+
+    return (
+      position.x >= areaLeft &&
+      position.y >= areaTop &&
+      windowRight <= areaRight &&
+      windowBottom <= areaBottom
+    );
+  });
+}
+
+function windowAlmostFillsAnyWorkArea(size: StoredWindowSize, monitors: Monitor[]): boolean {
+  const tolerance = 32;
+  return monitors.some((monitor) => {
+    const area = monitor.workArea.size;
+    return size.width >= area.width - tolerance && size.height >= area.height - tolerance;
+  });
+}
+
+function isTauriRuntime(): boolean {
+  return "__TAURI_INTERNALS__" in window;
 }
 
 async function loadKubeconfigs(showLoading: boolean): Promise<void> {
