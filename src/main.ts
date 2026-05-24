@@ -173,6 +173,7 @@ if (!appRoot) {
 const app: HTMLDivElement = appRoot;
 const THEME_STORAGE_KEY = "k8s-file-explorer-theme";
 const CONSOLE_STORAGE_KEY = "k8s-file-explorer-console";
+const LOCAL_PATH_STORAGE_KEY = "k8s-file-explorer-local-path";
 
 const state: AppState = {
   kubectl: null,
@@ -271,7 +272,7 @@ async function init(): Promise<void> {
     const [kubectl] = await Promise.all([
       invoke<ToolStatus>("check_kubectl"),
       loadKubeconfigs(false),
-      loadLocalDir(null, false),
+      loadInitialLocalDir(),
       loadKubectlLogs(false),
     ]);
     state.kubectl = kubectl;
@@ -788,6 +789,15 @@ function saveConsoleExpanded(expanded: boolean): void {
   window.localStorage.setItem(CONSOLE_STORAGE_KEY, expanded ? "expanded" : "collapsed");
 }
 
+function initialLocalPath(): string | null {
+  const stored = window.localStorage.getItem(LOCAL_PATH_STORAGE_KEY)?.trim();
+  return stored ? stored : null;
+}
+
+function saveLocalPath(path: string): void {
+  window.localStorage.setItem(LOCAL_PATH_STORAGE_KEY, path);
+}
+
 async function loadKubeconfigs(showLoading: boolean): Promise<void> {
   if (showLoading) {
     state.remote.loading = true;
@@ -1110,7 +1120,15 @@ async function loadRemotePath(path: string, useCache = true): Promise<void> {
   }
 }
 
-async function loadLocalDir(path: string | null, showLoading: boolean, useCache = true): Promise<void> {
+async function loadInitialLocalDir(): Promise<void> {
+  const path = initialLocalPath();
+  if (path && (await loadLocalDir(path, false))) {
+    return;
+  }
+  await loadLocalDir(null, false, false);
+}
+
+async function loadLocalDir(path: string | null, showLoading: boolean, useCache = true): Promise<boolean> {
   const cacheKey = path ? prefetchKey({ kind: "local-dir", path }) : null;
   const cachedDirectory = cacheKey && useCache ? localDirCache.get(cacheKey) : undefined;
   if (cachedDirectory) {
@@ -1121,8 +1139,9 @@ async function loadLocalDir(path: string | null, showLoading: boolean, useCache 
     state.local.selectedIndices = [];
     state.local.error = null;
     state.local.loading = false;
+    saveLocalPath(cachedDirectory.path);
     render();
-    return;
+    return true;
   }
 
   if (showLoading) {
@@ -1131,6 +1150,7 @@ async function loadLocalDir(path: string | null, showLoading: boolean, useCache 
     render();
   }
 
+  let success = false;
   try {
     if (cacheKey && useCache) {
       await waitForPrefetch(cacheKey);
@@ -1147,6 +1167,8 @@ async function loadLocalDir(path: string | null, showLoading: boolean, useCache 
     state.local.selectedIndex = null;
     state.local.selectedIndices = [];
     state.local.error = null;
+    saveLocalPath(directory.path);
+    success = true;
   } catch (error) {
     state.local.error = formatError(error);
   } finally {
@@ -1155,6 +1177,7 @@ async function loadLocalDir(path: string | null, showLoading: boolean, useCache 
       render();
     }
   }
+  return success;
 }
 
 async function openLocalIndex(index: number): Promise<void> {
