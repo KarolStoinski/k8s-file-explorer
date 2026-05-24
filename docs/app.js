@@ -9,7 +9,9 @@ const translations = {
     eyebrow: "Desktop explorer for Kubernetes pods",
     heroLead:
       "Browse pod files, move artifacts, and open remote files locally without turning every file task into a chain of kubectl commands.",
-    heroDownload: "Download",
+    heroDownloadMac: "Download for macOS (Apple Silicon)",
+    heroDownloadWindows: "Download for Windows",
+    heroReleases: "View all GitHub releases",
     heroPrimary: "Explore features",
     heroSecondary: "Check requirements",
     previewKubectl: "kubectl ready",
@@ -90,7 +92,9 @@ const translations = {
     eyebrow: "Desktopowy eksplorator podów Kubernetes",
     heroLead:
       "Przeglądaj pliki w podach, przenoś artefakty i otwieraj zdalne pliki lokalnie bez składania za każdym razem sekwencji komend kubectl.",
-    heroDownload: "Pobierz",
+    heroDownloadMac: "Pobierz dla macOS (Apple Silicon)",
+    heroDownloadWindows: "Pobierz dla Windows",
+    heroReleases: "Zobacz wszystkie wydania na GitHubie",
     heroPrimary: "Zobacz funkcje",
     heroSecondary: "Sprawdź wymagania",
     previewKubectl: "kubectl gotowy",

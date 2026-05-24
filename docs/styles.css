@@ -179,12 +179,33 @@ a.button {
   font-size: 1.18rem;
 }
 
+.download-actions,
 .hero-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   gap: 12px;
+}
+
+.download-actions {
   margin-top: 30px;
+}
+
+.hero-actions {
+  margin-top: 18px;
+}
+
+.releases-link {
+  margin-top: 10px;
+  color: var(--blue-dark);
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-underline-offset: 3px;
+}
+
+.releases-link:hover,
+.releases-link:focus {
+  color: var(--blue);
 }
 
 .button {
