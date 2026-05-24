@@ -235,6 +235,8 @@ let activeTransferResize: { index: number; startX: number; startWidth: number } 
 let hoverPrefetchTimer: number | null = null;
 let hoverPrefetchKey: string | null = null;
 let windowPlacementSaveTimer: number | null = null;
+let copiedKubectlLogId: number | null = null;
+let copiedKubectlLogTimer: number | null = null;
 
 const PREFETCH_DELAY_MS = 200;
 const namespaceCache = new Map<string, NamespaceEntry[]>();
@@ -406,6 +408,10 @@ async function handleClick(event: MouseEvent): Promise<void> {
     }
     if (action.dataset.action === "cancel-transfer") {
       await cancelTransfer(Number(action.dataset.transferId));
+      return;
+    }
+    if (action.dataset.action === "copy-kubectl-message") {
+      await copyKubectlMessage(Number(action.dataset.logId));
       return;
     }
     await runAction(action.dataset.action ?? "");
@@ -1831,6 +1837,60 @@ async function cancelTransfer(id: number): Promise<void> {
   }
 }
 
+async function copyKubectlMessage(id: number): Promise<void> {
+  if (!Number.isFinite(id)) {
+    return;
+  }
+
+  const entry = state.kubectlLogs.find((item) => item.id === id);
+  if (!entry) {
+    return;
+  }
+
+  try {
+    await writeClipboardText(kubectlLogClipboardText(entry));
+    copiedKubectlLogId = id;
+    updateKubectlRuntimeViews();
+    if (copiedKubectlLogTimer !== null) {
+      window.clearTimeout(copiedKubectlLogTimer);
+    }
+    copiedKubectlLogTimer = window.setTimeout(() => {
+      copiedKubectlLogId = null;
+      copiedKubectlLogTimer = null;
+      updateKubectlRuntimeViews();
+    }, 1500);
+  } catch (error) {
+    state.bootError = formatError(error);
+    render();
+  }
+}
+
+async function writeClipboardText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall back to the legacy selection path below.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    if (!document.execCommand("copy")) {
+      throw new Error("Nie udało się skopiować tekstu do schowka.");
+    }
+  } finally {
+    textarea.remove();
+  }
+}
+
 function resetRemoteToRoot(): void {
   state.remote.level = "kubeconfigs";
   state.remote.namespace = null;
@@ -2410,7 +2470,8 @@ function renderKubectlConsole(): string {
         .slice()
         .reverse()
         .map((entry) => {
-          const output = [entry.stdout, entry.stderr, entry.error].filter(Boolean).join("\n");
+          const output = kubectlLogOutput(entry);
+          const copied = copiedKubectlLogId === entry.id;
           return `
             <div class="console-entry ${entry.finished ? entry.success ? "success" : "failed" : "running"}">
               <div class="console-command">
@@ -2418,8 +2479,13 @@ function renderKubectlConsole(): string {
                 <span>${escapeHtml(kubectlLogStatus(entry))}</span>
                 <span>${escapeHtml(kubectlLogDuration(entry))}</span>
                 <code>${escapeHtml(entry.command)}</code>
+                <button class="console-copy-button" type="button" data-action="copy-kubectl-message" data-log-id="${entry.id}" title="${copied ? "Skopiowano" : "Kopiuj komendę i odpowiedź"}" aria-label="${copied ? "Skopiowano" : "Kopiuj komendę i odpowiedź"}">
+                  <i data-lucide="${copied ? "check" : "copy"}"></i>
+                </button>
               </div>
-              ${output ? `<pre>${escapeHtml(output)}</pre>` : `<pre class="muted">Brak outputu</pre>`}
+              <div class="console-output">
+                ${output ? `<pre>${escapeHtml(output)}</pre>` : `<pre class="muted">Brak outputu</pre>`}
+              </div>
             </div>
           `;
         })
@@ -2660,6 +2726,15 @@ function kubectlLogStatus(entry: KubectlLogEntry): string {
     return "RUN";
   }
   return entry.success ? "OK" : "BŁĄD";
+}
+
+function kubectlLogOutput(entry: KubectlLogEntry): string {
+  return [entry.stdout, entry.stderr, entry.error].filter(Boolean).join("\n");
+}
+
+function kubectlLogClipboardText(entry: KubectlLogEntry): string {
+  const output = kubectlLogOutput(entry) || "Brak outputu";
+  return `Komenda:\n${entry.command}\n\nOdpowiedź:\n${output}`;
 }
 
 function kubectlLogDuration(entry: KubectlLogEntry): string {

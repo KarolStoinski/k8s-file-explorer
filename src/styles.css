@@ -658,7 +658,8 @@ button {
   background: #29394a;
 }
 
-.console-toggle svg {
+.console-toggle svg,
+.console-copy-button svg {
   width: 14px;
   height: 14px;
 }
@@ -684,7 +685,7 @@ button {
 
 .console-command {
   display: grid;
-  grid-template-columns: 74px 48px 72px minmax(0, 1fr);
+  grid-template-columns: 74px 48px 72px minmax(0, 1fr) 24px;
   gap: 8px;
   align-items: start;
   color: #9fb2c4;
@@ -707,6 +708,33 @@ button {
 
 .console-entry.failed .console-command span:nth-child(2) {
   color: #ff9b91;
+}
+
+.console-output {
+  min-width: 0;
+}
+
+.console-copy-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: end;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: #a9bbcc;
+  cursor: pointer;
+  opacity: 0.42;
+}
+
+.console-copy-button:hover {
+  border-color: #34475a;
+  background: #172433;
+  color: #e8f0f7;
+  opacity: 0.9;
 }
 
 .console-entry pre {
