@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "k8s-file-explorer",
+  "productName": "K8s File Explorer",
   "version": "0.1.0",
   "identifier": "com.karol.k8sfileexplorer",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "k8s-file-explorer",
+        "title": "K8s File Explorer",
         "width": 1280,
         "height": 820,
         "minWidth": 1000,

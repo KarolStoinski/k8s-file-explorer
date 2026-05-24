@@ -1,8 +1,8 @@
 [package]
 name = "k8s-file-explorer"
 version = "0.1.0"
-description = "Desktop file explorer for Kubernetes pods"
-authors = ["k8s-file-explorer contributors"]
+description = "K8s File Explorer desktop app for Kubernetes pods"
+authors = ["K8s File Explorer contributors"]
 edition = "2021"
 
 [lib]

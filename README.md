@@ -1,4 +1,4 @@
-# k8s-file-explorer
+# K8s File Explorer
 
 A desktop file explorer for Kubernetes pods, built with Tauri.
 

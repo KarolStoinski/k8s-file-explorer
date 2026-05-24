@@ -1,8 +1,8 @@
-# PRD: k8s-file-explorer
+# PRD: K8s File Explorer
 
 ## 1. Cel produktu
 
-`k8s-file-explorer` to desktopowa aplikacja w Tauri do eksplorowania plików w podach Kubernetes oraz transferu plików między lokalnym komputerem a kontenerami w klastrach. Interfejs ma działać podobnie do FileZilli: po lewej stronie znajduje się eksplorator zasobów Kubernetes, po prawej eksplorator lokalnego systemu plików.
+K8s File Explorer to desktopowa aplikacja w Tauri do eksplorowania plików w podach Kubernetes oraz transferu plików między lokalnym komputerem a kontenerami w klastrach. Interfejs ma działać podobnie do FileZilli: po lewej stronie znajduje się eksplorator zasobów Kubernetes, po prawej eksplorator lokalnego systemu plików.
 
 Produkt ma uprościć typowe operacje developerskie i operatorskie:
 
