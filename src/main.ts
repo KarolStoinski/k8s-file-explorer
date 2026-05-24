@@ -357,6 +357,14 @@ async function invokeKubectl<T>(command: string, args?: Record<string, unknown>)
   }
 }
 
+async function nativeConfirm(title: string, message: string): Promise<boolean> {
+  try {
+    return await invoke<boolean>("confirm_dialog", { title, message });
+  } catch {
+    return window.confirm(message);
+  }
+}
+
 function nextPaint(): Promise<void> {
   return new Promise((resolve) => {
     requestAnimationFrame(() => {
@@ -1092,7 +1100,13 @@ async function openKubeconfig(index: number): Promise<void> {
   if (!kubeconfig) {
     return;
   }
-  if (!kubeconfig.isValid && !window.confirm(`${kubeconfig.name} może nie być kubeconfigiem. Spróbować mimo to?`)) {
+  if (
+    !kubeconfig.isValid &&
+    !(await nativeConfirm(
+      "Otworzyć kubeconfig?",
+      `${kubeconfig.name} może nie być kubeconfigiem. Spróbować mimo to?`,
+    ))
+  ) {
     return;
   }
   const cacheKey = prefetchKey({ kind: "namespaces", kubeconfig });
@@ -1286,7 +1300,12 @@ async function openRemoteEntry(index: number): Promise<void> {
     return;
   }
 
-  if (!window.confirm(`Pobrać plik "${entry.name}" do katalogu tymczasowego i otworzyć lokalnie?`)) {
+  if (
+    !(await nativeConfirm(
+      "Otworzyć plik z poda?",
+      `Pobrać plik "${entry.name}" do katalogu tymczasowego i otworzyć lokalnie?`,
+    ))
+  ) {
     return;
   }
 
@@ -1614,7 +1633,13 @@ async function downloadSelectedRemote(): Promise<void> {
       child: entry.name,
     });
 
-    if (localNameExists(entry.name) && !window.confirm(`Lokalny element "${entry.name}" już istnieje. Nadpisać?`)) {
+    if (
+      localNameExists(entry.name) &&
+      !(await nativeConfirm(
+        "Nadpisać lokalny element?",
+        `Lokalny element "${entry.name}" już istnieje. Nadpisać?`,
+      ))
+    ) {
       continue;
     }
 
@@ -1653,7 +1678,13 @@ async function uploadSelectedLocal(): Promise<void> {
 
   for (const entry of entries) {
     const destination = joinRemotePath(state.remote.path, entry.name);
-    if (remoteNameExists(entry.name) && !window.confirm(`Zdalny element "${entry.name}" już istnieje. Nadpisać?`)) {
+    if (
+      remoteNameExists(entry.name) &&
+      !(await nativeConfirm(
+        "Nadpisać zdalny element?",
+        `Zdalny element "${entry.name}" już istnieje. Nadpisać?`,
+      ))
+    ) {
       continue;
     }
 

@@ -754,6 +754,22 @@ fn open_local_file(path: String) -> Result<(), String> {
     open::that(path).map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+async fn confirm_dialog(title: String, message: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = rfd::MessageDialog::new()
+            .set_title(title)
+            .set_description(message)
+            .set_level(rfd::MessageLevel::Info)
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .show();
+
+        Ok(matches!(result, rfd::MessageDialogResult::Yes))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 fn run_kubectl(args: Vec<OsString>) -> Result<String, String> {
     run_kubectl_with_timeout(args, kubectl_timeout())
 }
@@ -1401,7 +1417,8 @@ pub fn run() {
             copy_remote_to_local,
             copy_local_to_remote,
             download_remote_to_temp,
-            open_local_file
+            open_local_file,
+            confirm_dialog
         ])
         .run(tauri::generate_context!())
         .expect("failed to run tauri application");
