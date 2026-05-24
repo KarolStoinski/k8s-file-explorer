@@ -218,7 +218,7 @@ let activeTransferResize: { index: number; startX: number; startWidth: number } 
 let hoverPrefetchTimer: number | null = null;
 let hoverPrefetchKey: string | null = null;
 
-const PREFETCH_DELAY_MS = 450;
+const PREFETCH_DELAY_MS = 200;
 const namespaceCache = new Map<string, NamespaceEntry[]>();
 const podCache = new Map<string, PodEntry[]>();
 const containerCache = new Map<string, ContainerEntry[]>();
