@@ -2429,7 +2429,7 @@ function renderEmptyState(icon: string, message: string, tone = ""): string {
 
 function renderRemoteBreadcrumbs(): string {
   const crumbs: string[] = [
-    renderBreadcrumbButton("root", "root"),
+    renderBreadcrumbButton("~/.kube", "root"),
   ];
   if (state.remote.kubeconfig) {
     crumbs.push(renderBreadcrumbButton(state.remote.kubeconfig.name, "kubeconfig"));
