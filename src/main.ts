@@ -172,6 +172,7 @@ if (!appRoot) {
 
 const app: HTMLDivElement = appRoot;
 const THEME_STORAGE_KEY = "k8s-file-explorer-theme";
+const CONSOLE_STORAGE_KEY = "k8s-file-explorer-console";
 
 const state: AppState = {
   kubectl: null,
@@ -207,7 +208,7 @@ const state: AppState = {
   activeKubectlActions: 0,
   contextMenu: null,
   transferColumns: [120, 36, 360, 360, 260],
-  consoleExpanded: false,
+  consoleExpanded: initialConsoleExpanded(),
   theme: initialTheme(),
   nextTransferId: 1,
   bootError: null,
@@ -745,6 +746,7 @@ async function runAction(action: string): Promise<void> {
       break;
     case "toggle-console":
       state.consoleExpanded = !state.consoleExpanded;
+      saveConsoleExpanded(state.consoleExpanded);
       render();
       break;
     case "toggle-theme":
@@ -765,6 +767,21 @@ function initialTheme(): ThemeMode {
 
 function saveTheme(theme: ThemeMode): void {
   window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+}
+
+function initialConsoleExpanded(): boolean {
+  const stored = window.localStorage.getItem(CONSOLE_STORAGE_KEY);
+  if (stored === "expanded") {
+    return true;
+  }
+  if (stored === "collapsed") {
+    return false;
+  }
+  return false;
+}
+
+function saveConsoleExpanded(expanded: boolean): void {
+  window.localStorage.setItem(CONSOLE_STORAGE_KEY, expanded ? "expanded" : "collapsed");
 }
 
 async function loadKubeconfigs(showLoading: boolean): Promise<void> {
