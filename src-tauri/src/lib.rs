@@ -507,7 +507,15 @@ fn list_remote_dir_blocking(
     args.push(OsString::from("--"));
     args.push(OsString::from(&path));
 
-    let stdout = run_kubectl(args)?;
+    let output = run_kubectl_output_with_timeout(args, kubectl_timeout())?;
+    if !output.success {
+        if is_missing_container_command_error(&output, "ls") {
+            return Err(missing_container_ls_message(&target, &path));
+        }
+        return Err(format_process_error("kubectl", &output));
+    }
+
+    let stdout = output.stdout;
     let mut entries = stdout
         .lines()
         .filter_map(|line| parse_ls_line(line, &path))
@@ -1018,6 +1026,42 @@ fn format_process_error(command: &str, output: &ProcessOutput) -> String {
         Some(code) => format!("{command} zakończył się kodem {code}: {details}"),
         None => format!("{command} zakończył się błędem: {details}"),
     }
+}
+
+fn is_missing_container_command_error(output: &ProcessOutput, command: &str) -> bool {
+    let details = format!("{} {}", output.stderr, output.stdout).to_ascii_lowercase();
+    let command = command.to_ascii_lowercase();
+    let exec_double_quoted = format!("exec: \"{command}\"");
+    let exec_single_quoted = format!("exec: '{command}'");
+    let exec_unquoted = format!("exec: {command}:");
+    let command_not_found = format!("{command}: command not found");
+    let command_not_found_busybox = format!("{command}: not found");
+    let stat_command = format!("stat {command}: no such file or directory");
+
+    (details.contains(&exec_double_quoted)
+        || details.contains(&exec_single_quoted)
+        || details.contains(&exec_unquoted)
+        || details.contains(&command_not_found)
+        || details.contains(&command_not_found_busybox)
+        || details.contains(&stat_command))
+        && (details.contains("executable file not found")
+            || details.contains("no such file or directory")
+            || details.contains("command not found")
+            || details.contains("not found"))
+}
+
+fn missing_container_ls_message(target: &RemoteTarget, path: &str) -> String {
+    let scope = target
+        .container
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .map(|container| format!("kontener `{container}` w podzie `{}`", target.pod))
+        .unwrap_or_else(|| format!("pod `{}`", target.pod));
+
+    format!(
+        "Nie można wyświetlić katalogu `{path}`.\n\
+         {scope} nie ma programu `ls`, którego aplikacja używa do listowania plików.",
+    )
 }
 
 fn os_args<const N: usize>(args: [&str; N]) -> Vec<OsString> {

@@ -1830,7 +1830,7 @@ function renderEmptyState(icon: string, message: string, tone = ""): string {
   return `
     <div class="empty-state ${tone}">
       <i data-lucide="${icon}"></i>
-      <span>${escapeHtml(message)}</span>
+      <span class="empty-state-message">${escapeHtml(message)}</span>
     </div>
   `;
 }

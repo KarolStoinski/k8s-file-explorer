@@ -409,6 +409,12 @@ button {
   line-height: 18px;
 }
 
+.empty-state-message {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
 .empty-state .lucide-loader,
 .icon-button .lucide-loader,
 .transfer-row .lucide-loader {
