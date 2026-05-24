@@ -6,6 +6,7 @@ type EntryKind = "file" | "directory" | "symlink" | "unknown";
 type RemoteLevel = "kubeconfigs" | "namespaces" | "pods" | "containers" | "remote";
 type TransferStatus = "running" | "success" | "failed";
 type TransferDirection = "download" | "upload" | "temp";
+type ThemeMode = "light" | "dark";
 
 interface ToolStatus {
   available: boolean;
@@ -158,6 +159,7 @@ interface AppState {
   contextMenu: ContextMenuState | null;
   transferColumns: number[];
   consoleExpanded: boolean;
+  theme: ThemeMode;
   nextTransferId: number;
   bootError: string | null;
 }
@@ -169,6 +171,7 @@ if (!appRoot) {
 }
 
 const app: HTMLDivElement = appRoot;
+const THEME_STORAGE_KEY = "k8s-file-explorer-theme";
 
 const state: AppState = {
   kubectl: null,
@@ -205,6 +208,7 @@ const state: AppState = {
   contextMenu: null,
   transferColumns: [120, 36, 360, 360, 260],
   consoleExpanded: false,
+  theme: initialTheme(),
   nextTransferId: 1,
   bootError: null,
 };
@@ -743,7 +747,24 @@ async function runAction(action: string): Promise<void> {
       state.consoleExpanded = !state.consoleExpanded;
       render();
       break;
+    case "toggle-theme":
+      state.theme = state.theme === "dark" ? "light" : "dark";
+      saveTheme(state.theme);
+      render();
+      break;
   }
+}
+
+function initialTheme(): ThemeMode {
+  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+  if (stored === "dark" || stored === "light") {
+    return stored;
+  }
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function saveTheme(theme: ThemeMode): void {
+  window.localStorage.setItem(THEME_STORAGE_KEY, theme);
 }
 
 async function loadKubeconfigs(showLoading: boolean): Promise<void> {
@@ -1501,11 +1522,13 @@ function updateTransfer(
 
 function render(): void {
   const scrollPositions = captureScrollPositions();
+  const themeIcon = state.theme === "dark" ? "sun" : "moon";
+  const themeTitle = state.theme === "dark" ? "Przełącz na jasny motyw" : "Przełącz na ciemny motyw";
   app.innerHTML = `
-    <div class="app-shell ${state.consoleExpanded ? "console-expanded" : "console-collapsed"}">
+    <div class="app-shell ${state.consoleExpanded ? "console-expanded" : "console-collapsed"}" data-theme="${state.theme}">
       ${state.bootError ? `<div class="banner error">${escapeHtml(state.bootError)}</div>` : `<div class="banner-placeholder" aria-hidden="true"></div>`}
       <main class="workspace">
-        ${renderRemotePanel()}
+        ${renderRemotePanel(themeIcon, themeTitle)}
         ${renderLocalPanel()}
       </main>
       ${renderTransfers()}
@@ -1539,7 +1562,7 @@ function restoreScrollPositions(positions: Record<string, number>): void {
   });
 }
 
-function renderRemotePanel(): string {
+function renderRemotePanel(themeIcon: string, themeTitle: string): string {
   return `
     <section class="panel remote-panel" aria-label="Kubernetes">
       <div class="panel-header">
@@ -1548,6 +1571,9 @@ function renderRemotePanel(): string {
           <div class="breadcrumbs">${renderRemoteBreadcrumbs()}</div>
         </div>
         <div class="panel-actions">
+          <button class="icon-button" type="button" data-action="toggle-theme" title="${themeTitle}" aria-label="${themeTitle}">
+            <i data-lucide="${themeIcon}"></i>
+          </button>
           <button class="icon-button" type="button" data-action="remote-root" title="Katalog główny Kubernetes" ${state.remote.loading || state.activeKubectlActions > 0 ? "disabled" : ""}>
             <i data-lucide="network"></i>
           </button>
