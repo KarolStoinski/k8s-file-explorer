@@ -46,98 +46,119 @@
 
         <div class="hero-visual" aria-label="K8s File Explorer interface preview">
           <div class="app-preview">
-            <div class="preview-titlebar">
-              <div class="window-controls" aria-hidden="true">
-                <span></span>
-                <span></span>
-                <span></span>
-              </div>
-              <div class="preview-title">K8s File Explorer</div>
-              <div class="kubectl-state" data-i18n="previewKubectl">kubectl ready</div>
-            </div>
-
-            <div class="preview-toolbar">
-              <span data-i18n="previewContext">prod-eu / payments</span>
-              <span data-i18n="previewActivity">2 active operations</span>
-            </div>
-
-            <div class="preview-body">
-              <section class="preview-pane remote-pane" aria-label="Remote pod files">
-                <div class="pane-header">
-                  <span data-i18n="previewRemote">Kubernetes pod</span>
-                  <strong>/app/config</strong>
-                </div>
-                <div class="tree-list">
-                  <div class="tree-row level-one active">
-                    <span class="node-icon cluster"></span>
-                    <span>prod-eu</span>
-                    <small>kubeconfig</small>
+            <main class="preview-workspace">
+              <section class="preview-panel preview-remote" aria-label="Remote pod files">
+                <div class="preview-panel-header">
+                  <div>
+                    <h2 data-i18n="previewRemoteTitle">Kubernetes</h2>
+                    <div class="preview-breadcrumbs">
+                      <span>prod-eu</span><span>payments</span><span>api-7b6c9f</span><span>/app/config</span>
+                    </div>
                   </div>
-                  <div class="tree-row level-two">
-                    <span class="node-icon namespace"></span>
-                    <span>payments</span>
-                    <small>namespace</small>
-                  </div>
-                  <div class="tree-row level-three">
-                    <span class="node-icon pod"></span>
-                    <span>api-7b6c9f</span>
-                    <small>pod</small>
-                  </div>
-                  <div class="tree-row level-four selected">
-                    <span class="node-icon folder"></span>
-                    <span>/app/config</span>
-                    <small>container</small>
+                  <div class="preview-actions" aria-hidden="true">
+                    <span></span><span></span><span></span>
                   </div>
                 </div>
-                <div class="file-list">
-                  <div class="file-row head">
-                    <span data-i18n="previewName">Name</span>
-                    <span data-i18n="previewSize">Size</span>
-                    <span data-i18n="previewModified">Modified</span>
+                <div class="preview-table-header preview-remote-grid">
+                  <span data-i18n="previewName">Name</span>
+                  <span data-i18n="previewStatus">Status</span>
+                  <span data-i18n="previewSize">Size</span>
+                  <span data-i18n="previewInfo">Info</span>
+                </div>
+                <div class="preview-file-list">
+                  <div class="preview-file-row preview-remote-grid selected">
+                    <span><span class="preview-file-icon folder"></span>config</span>
+                    <span>directory</span>
+                    <span>-</span>
+                    <span>drwxr-xr-x</span>
                   </div>
-                  <div class="file-row">
-                    <span>application.yaml</span>
+                  <div class="preview-file-row preview-remote-grid">
+                    <span><span class="preview-file-icon"></span>application.yaml</span>
+                    <span>file</span>
+                    <span>18 KB</span>
+                    <span>root root</span>
+                  </div>
+                  <div class="preview-file-row preview-remote-grid">
+                    <span><span class="preview-file-icon"></span>feature-flags.json</span>
+                    <span>file</span>
+                    <span>7 KB</span>
+                    <span>root root</span>
+                  </div>
+                </div>
+                <div class="preview-panel-footer">
+                  <span class="preview-tool-button" data-i18n="previewOpen">Open</span>
+                  <span class="preview-tool-button" data-i18n="previewDownloadButton">Download</span>
+                  <span class="preview-tool-button danger" data-i18n="previewDelete">Delete</span>
+                </div>
+              </section>
+
+              <section class="preview-panel preview-local" aria-label="Local files">
+                <div class="preview-panel-header">
+                  <div>
+                    <h2 data-i18n="previewLocalTitle">Locally</h2>
+                    <div class="preview-path" data-i18n="previewLocalPath">C:\Users\karol\Downloads\k8s</div>
+                  </div>
+                  <div class="preview-actions" aria-hidden="true">
+                    <span></span><span></span><span></span>
+                  </div>
+                </div>
+                <div class="preview-table-header preview-local-grid">
+                  <span data-i18n="previewName">Name</span>
+                  <span data-i18n="previewType">Type</span>
+                  <span data-i18n="previewSize">Size</span>
+                  <span data-i18n="previewModified">Modified</span>
+                </div>
+                <div class="preview-file-list">
+                  <div class="preview-file-row preview-local-grid">
+                    <span><span class="preview-file-icon"></span>debug.log</span>
+                    <span>file</span>
+                    <span>42 KB</span>
+                    <span>10:31</span>
+                  </div>
+                  <div class="preview-file-row preview-local-grid selected">
+                    <span><span class="preview-file-icon"></span>application.yaml</span>
+                    <span>file</span>
                     <span>18 KB</span>
                     <span>10:24</span>
                   </div>
-                  <div class="file-row">
-                    <span>feature-flags.json</span>
-                    <span>7 KB</span>
-                    <span>10:22</span>
-                  </div>
-                  <div class="file-row">
-                    <span>certs/</span>
+                  <div class="preview-file-row preview-local-grid">
+                    <span><span class="preview-file-icon folder"></span>reports</span>
+                    <span>directory</span>
                     <span>-</span>
                     <span>09:58</span>
                   </div>
                 </div>
-              </section>
-
-              <section class="preview-pane local-pane" aria-label="Local files">
-                <div class="pane-header">
-                  <span data-i18n="previewLocal">Local files</span>
-                  <strong>~/Downloads/k8s</strong>
-                </div>
-                <div class="local-grid">
-                  <div>debug.log</div>
-                  <div>heapdump.hprof</div>
-                  <div>application.yaml</div>
-                  <div>release-notes.md</div>
+                <div class="preview-panel-footer">
+                  <span class="preview-tool-button" data-i18n="previewOpen">Open</span>
+                  <span class="preview-tool-button" data-i18n="previewUpload">Upload</span>
+                  <span class="preview-tool-button danger" data-i18n="previewDelete">Delete</span>
                 </div>
               </section>
-            </div>
+            </main>
 
             <div class="preview-transfers">
-              <div class="transfer-row head">
-                <span data-i18n="previewTransfers">Transfers</span>
-                <span data-i18n="previewDirection">Direction</span>
+              <div class="preview-transfer-header">
                 <span data-i18n="previewStatus">Status</span>
+                <span data-i18n="previewDirection">Direction</span>
+                <span data-i18n="previewSource">Source</span>
+                <span data-i18n="previewTarget">Target</span>
+                <span data-i18n="previewInfo">Info</span>
               </div>
-              <div class="transfer-row">
-                <span>application.yaml</span>
-                <span data-i18n="previewDownload">pod to local</span>
+              <div class="preview-transfer-row">
                 <span class="status-running" data-i18n="previewRunning">running</span>
+                <span data-i18n="previewDownload">pod to local</span>
+                <span>/app/config/application.yaml</span>
+                <span>Downloads\k8s\application.yaml</span>
+                <span data-i18n="previewTransferInfo">8 s</span>
               </div>
+            </div>
+
+            <div class="preview-console">
+              <div class="preview-console-header">
+                <span data-i18n="previewConsole">kubectl console</span>
+                <span data-i18n="previewKubectl">kubectl ready</span>
+              </div>
+              <code>kubectl --request-timeout 90s exec api-7b6c9f -- ls -la -- /app/config</code>
             </div>
           </div>
         </div>
