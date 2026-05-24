@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { availableMonitors, getCurrentWindow, LogicalSize, PhysicalPosition, type Monitor } from "@tauri-apps/api/window";
 import { createIcons, icons } from "lucide";
+import { language, locale, t, type TranslationKey } from "./i18n";
 import "./styles.css";
 
 type EntryKind = "file" | "directory" | "symlink" | "unknown";
@@ -183,6 +184,7 @@ if (!appRoot) {
 }
 
 const app: HTMLDivElement = appRoot;
+document.documentElement.lang = language;
 const THEME_STORAGE_KEY = "k8s-file-explorer-theme";
 const CONSOLE_STORAGE_KEY = "k8s-file-explorer-console";
 const LOCAL_PATH_STORAGE_KEY = "k8s-file-explorer-local-path";
@@ -288,6 +290,7 @@ window.setInterval(() => {
 }, 1000);
 
 async function init(): Promise<void> {
+  await configureBackendLanguage();
   await restoreWindowPlacement();
   registerWindowPlacementPersistence();
   render();
@@ -304,6 +307,14 @@ async function init(): Promise<void> {
     state.bootError = formatError(error);
   } finally {
     render();
+  }
+}
+
+async function configureBackendLanguage(): Promise<void> {
+  try {
+    await invoke("set_app_language", { language });
+  } catch {
+    // The frontend language still drives the UI if the backend is unavailable.
   }
 }
 
@@ -1151,8 +1162,8 @@ async function openKubeconfig(index: number): Promise<void> {
   if (
     !kubeconfig.isValid &&
     !(await nativeConfirm(
-      "Otworzyć kubeconfig?",
-      `${kubeconfig.name} może nie być kubeconfigiem. Spróbować mimo to?`,
+      t("confirm.openKubeconfig.title"),
+      t("confirm.openKubeconfig.message", { name: kubeconfig.name }),
     ))
   ) {
     return;
@@ -1350,8 +1361,8 @@ async function openRemoteEntry(index: number): Promise<void> {
 
   if (
     !(await nativeConfirm(
-      "Otworzyć plik z poda?",
-      `Pobrać plik "${entry.name}" do katalogu tymczasowego i otworzyć lokalnie?`,
+      t("confirm.openRemoteFile.title"),
+      t("confirm.openRemoteFile.message", { name: entry.name }),
     ))
   ) {
     return;
@@ -1692,8 +1703,8 @@ async function downloadSelectedRemote(): Promise<void> {
     if (
       localNameExists(entry.name) &&
       !(await nativeConfirm(
-        "Nadpisać lokalny element?",
-        `Lokalny element "${entry.name}" już istnieje. Nadpisać?`,
+        t("confirm.overwriteLocal.title"),
+        t("confirm.overwriteLocal.message", { name: entry.name }),
       ))
     ) {
       continue;
@@ -1737,8 +1748,8 @@ async function uploadSelectedLocal(): Promise<void> {
     if (
       remoteNameExists(entry.name) &&
       !(await nativeConfirm(
-        "Nadpisać zdalny element?",
-        `Zdalny element "${entry.name}" już istnieje. Nadpisać?`,
+        t("confirm.overwriteRemote.title"),
+        t("confirm.overwriteRemote.message", { name: entry.name }),
       ))
     ) {
       continue;
@@ -1757,8 +1768,8 @@ async function deleteSelectedRemote(): Promise<void> {
   }
 
   const confirmed = await nativeConfirm(
-    "Usunąć z poda?",
-    `Usunąć ${describeSelection(entries)} z poda?\n\nTo będzie ostateczne usunięcie. Tej operacji nie można cofnąć.`,
+    t("confirm.deleteRemote.title"),
+    t("confirm.deleteRemote.message", { selection: describeSelection(entries) }),
   );
   if (!confirmed) {
     return;
@@ -1785,8 +1796,8 @@ async function deleteSelectedLocal(): Promise<void> {
   }
 
   const confirmed = await nativeConfirm(
-    "Przenieść do kosza?",
-    `Czy chcesz przenieść ${describeSelection(entries)} do kosza?`,
+    t("confirm.deleteLocal.title"),
+    t("confirm.deleteLocal.message", { selection: describeSelection(entries) }),
   );
   if (!confirmed) {
     return;
@@ -1845,7 +1856,7 @@ async function cancelTransfer(id: number): Promise<void> {
 
   try {
     await invoke("cancel_kubectl_operation", { operationId: id });
-    updateTransfer(id, "failed", transfer.destination, "Anulowano.");
+    updateTransfer(id, "failed", transfer.destination, t("transfer.cancelled"));
   } catch (error) {
     transfer.error = formatError(error);
     render();
@@ -1936,7 +1947,7 @@ async function writeClipboardText(text: string): Promise<void> {
   textarea.select();
   try {
     if (!document.execCommand("copy")) {
-      throw new Error("Nie udało się skopiować tekstu do schowka.");
+      throw new Error(t("error.copyClipboard"));
     }
   } finally {
     textarea.remove();
@@ -2055,15 +2066,15 @@ function remoteNameExists(name: string): boolean {
 
 function describeSelection(entries: Array<{ name: string }>): string {
   if (entries.length === 1) {
-    return `element "${entries[0].name}"`;
+    return t("selection.single", { name: entries[0].name });
   }
 
   const preview = entries
     .slice(0, 3)
     .map((entry) => `"${entry.name}"`)
     .join(", ");
-  const suffix = entries.length > 3 ? ` i ${entries.length - 3} więcej` : "";
-  return `zaznaczone elementy (${entries.length}): ${preview}${suffix}`;
+  const suffix = entries.length > 3 ? t("selection.moreSuffix", { count: entries.length - 3 }) : "";
+  return t("selection.multiple", { count: entries.length, preview, suffix });
 }
 
 function addTransfer(direction: TransferDirection, source: string, destination: string): number {
@@ -2103,7 +2114,7 @@ function updateTransfer(
 function render(): void {
   const scrollPositions = captureScrollPositions();
   const themeIcon = state.theme === "dark" ? "sun" : "moon";
-  const themeTitle = state.theme === "dark" ? "Przełącz na jasny motyw" : "Przełącz na ciemny motyw";
+  const themeTitle = state.theme === "dark" ? t("theme.toLight") : t("theme.toDark");
   app.innerHTML = `
     <div class="app-shell ${state.consoleExpanded ? "console-expanded" : "console-collapsed"}" data-theme="${state.theme}">
       ${state.bootError ? `<div class="banner error">${escapeHtml(state.bootError)}</div>` : `<div class="banner-placeholder" aria-hidden="true"></div>`}
@@ -2151,39 +2162,39 @@ function renderRemotePanel(themeIcon: string, themeTitle: string): string {
           <div class="breadcrumbs">${renderRemoteBreadcrumbs()}</div>
         </div>
         <div class="panel-actions">
-          <button class="icon-button" type="button" data-action="toggle-theme" title="${themeTitle}" aria-label="${themeTitle}">
+          <button class="icon-button" type="button" data-action="toggle-theme" title="${escapeAttr(themeTitle)}" aria-label="${escapeAttr(themeTitle)}">
             <i data-lucide="${themeIcon}"></i>
           </button>
-          <button class="icon-button" type="button" data-action="remote-root" title="Katalog główny Kubernetes" ${state.remote.loading || state.activeKubectlActions > 0 ? "disabled" : ""}>
+          <button class="icon-button" type="button" data-action="remote-root" title="${escapeAttr(t("toolbar.remoteRoot"))}" ${state.remote.loading || state.activeKubectlActions > 0 ? "disabled" : ""}>
             <i data-lucide="network"></i>
           </button>
-          <button class="icon-button" type="button" data-action="remote-up" title="Poziom wyżej" ${state.remote.level === "kubeconfigs" || state.remote.loading || state.activeKubectlActions > 0 ? "disabled" : ""}>
+          <button class="icon-button" type="button" data-action="remote-up" title="${escapeAttr(t("toolbar.remoteUp"))}" ${state.remote.level === "kubeconfigs" || state.remote.loading || state.activeKubectlActions > 0 ? "disabled" : ""}>
             <i data-lucide="arrow-up"></i>
           </button>
-          <button class="icon-button" type="button" data-action="refresh-remote" title="Odśwież" ${state.remote.loading || state.activeKubectlActions > 0 ? "disabled" : ""}>
+          <button class="icon-button" type="button" data-action="refresh-remote" title="${escapeAttr(t("toolbar.refresh"))}" ${state.remote.loading || state.activeKubectlActions > 0 ? "disabled" : ""}>
             <i data-lucide="${state.remote.loading || state.activeKubectlActions > 0 ? "loader" : "refresh-cw"}"></i>
           </button>
         </div>
       </div>
       <div class="table-header remote-grid">
-        <span>Nazwa</span>
-        <span>Status</span>
-        <span>Rozmiar</span>
-        <span>Info</span>
+        <span>${escapeHtml(t("table.name"))}</span>
+        <span>${escapeHtml(t("table.status"))}</span>
+        <span>${escapeHtml(t("table.size"))}</span>
+        <span>${escapeHtml(t("table.info"))}</span>
       </div>
       <div class="file-list" role="listbox" aria-busy="${state.remote.loading}" data-scroll-key="remote-files">
         ${renderRemoteRows()}
       </div>
       <div class="panel-footer">
         ${renderTarWarning()}
-        <button class="tool-button" type="button" data-action="open-remote" title="Otwórz zaznaczony element" ${canOpenRemote() ? "" : "disabled"}>
-          <i data-lucide="folder-open"></i><span>Otwórz</span>
+        <button class="tool-button" type="button" data-action="open-remote" title="${escapeAttr(t("toolbar.openSelected"))}" ${canOpenRemote() ? "" : "disabled"}>
+          <i data-lucide="folder-open"></i><span>${escapeHtml(t("action.open"))}</span>
         </button>
-        <button class="tool-button" type="button" data-action="download" title="Pobierz z poda" ${canDownload() ? "" : "disabled"}>
-          <i data-lucide="download"></i><span>Pobierz</span>
+        <button class="tool-button" type="button" data-action="download" title="${escapeAttr(t("toolbar.downloadFromPod"))}" ${canDownload() ? "" : "disabled"}>
+          <i data-lucide="download"></i><span>${escapeHtml(t("action.download"))}</span>
         </button>
-        <button class="tool-button danger-button" type="button" data-action="delete-remote" title="Usuń z poda" ${canDeleteRemote() ? "" : "disabled"}>
-          <i data-lucide="trash-2"></i><span>Usuń</span>
+        <button class="tool-button danger-button" type="button" data-action="delete-remote" title="${escapeAttr(t("toolbar.deleteFromPod"))}" ${canDeleteRemote() ? "" : "disabled"}>
+          <i data-lucide="trash-2"></i><span>${escapeHtml(t("action.delete"))}</span>
         </button>
       </div>
     </section>
@@ -2196,49 +2207,49 @@ function renderTarWarning(): string {
   }
   return `
     <div class="tar-warning" role="alert">
-      Kontener nie ma narzędzia tar, więc pobieranie i wysyłanie przez kubectl cp nie będzie działać.
+      ${escapeHtml(t("warning.tar"))}
     </div>
   `;
 }
 
 function renderLocalPanel(): string {
   return `
-    <section class="panel local-panel" aria-label="Lokalny system plików">
+    <section class="panel local-panel" aria-label="${escapeAttr(t("local.aria"))}">
       <div class="panel-header">
         <div>
-          <h2>Lokalnie</h2>
-          <input class="path-input" data-local-path value="${escapeAttr(state.local.path)}" aria-label="Lokalna ścieżka" />
+          <h2>${escapeHtml(t("local.title"))}</h2>
+          <input class="path-input" data-local-path value="${escapeAttr(state.local.path)}" aria-label="${escapeAttr(t("local.path"))}" />
         </div>
         <div class="panel-actions">
-          <button class="icon-button" type="button" data-action="local-home" title="Katalog domowy">
+          <button class="icon-button" type="button" data-action="local-home" title="${escapeAttr(t("toolbar.home"))}">
             <i data-lucide="home"></i>
           </button>
-          <button class="icon-button" type="button" data-action="local-up" title="Poziom wyżej" ${state.local.parent ? "" : "disabled"}>
+          <button class="icon-button" type="button" data-action="local-up" title="${escapeAttr(t("toolbar.localUp"))}" ${state.local.parent ? "" : "disabled"}>
             <i data-lucide="arrow-up"></i>
           </button>
-          <button class="icon-button" type="button" data-action="refresh-local" title="Odśwież">
+          <button class="icon-button" type="button" data-action="refresh-local" title="${escapeAttr(t("toolbar.refresh"))}">
             <i data-lucide="refresh-cw"></i>
           </button>
         </div>
       </div>
       <div class="table-header local-grid">
-        <span>Nazwa</span>
-        <span>Typ</span>
-        <span>Rozmiar</span>
-        <span>Modyfikacja</span>
+        <span>${escapeHtml(t("table.name"))}</span>
+        <span>${escapeHtml(t("table.type"))}</span>
+        <span>${escapeHtml(t("table.size"))}</span>
+        <span>${escapeHtml(t("table.modified"))}</span>
       </div>
       <div class="file-list" role="listbox" aria-busy="${state.local.loading}" data-scroll-key="local-files">
         ${renderLocalRows()}
       </div>
       <div class="panel-footer">
-        <button class="tool-button" type="button" data-action="open-local" title="Otwórz zaznaczony element" ${canOpenLocal() ? "" : "disabled"}>
-          <i data-lucide="folder-open"></i><span>Otwórz</span>
+        <button class="tool-button" type="button" data-action="open-local" title="${escapeAttr(t("toolbar.openSelected"))}" ${canOpenLocal() ? "" : "disabled"}>
+          <i data-lucide="folder-open"></i><span>${escapeHtml(t("action.open"))}</span>
         </button>
-        <button class="tool-button" type="button" data-action="upload" title="Wyślij do poda" ${canUpload() ? "" : "disabled"}>
-          <i data-lucide="upload"></i><span>Wyślij</span>
+        <button class="tool-button" type="button" data-action="upload" title="${escapeAttr(t("toolbar.uploadToPod"))}" ${canUpload() ? "" : "disabled"}>
+          <i data-lucide="upload"></i><span>${escapeHtml(t("action.upload"))}</span>
         </button>
-        <button class="tool-button danger-button" type="button" data-action="delete-local" title="Przenieś do kosza" ${canDeleteLocal() ? "" : "disabled"}>
-          <i data-lucide="trash-2"></i><span>Usuń</span>
+        <button class="tool-button danger-button" type="button" data-action="delete-local" title="${escapeAttr(t("toolbar.moveToTrash"))}" ${canDeleteLocal() ? "" : "disabled"}>
+          <i data-lucide="trash-2"></i><span>${escapeHtml(t("action.delete"))}</span>
         </button>
       </div>
     </section>
@@ -2247,7 +2258,7 @@ function renderLocalPanel(): string {
 
 function renderRemoteRows(): string {
   if (state.remote.loading) {
-    return renderEmptyState("loader", "Ładowanie...");
+    return renderEmptyState("loader", t("empty.loading"));
   }
   if (state.remote.error) {
     return renderEmptyState("triangle-alert", state.remote.error, "error");
@@ -2256,7 +2267,7 @@ function renderRemoteRows(): string {
   switch (state.remote.level) {
     case "kubeconfigs":
       if (state.remote.kubeconfigs.length === 0) {
-        return renderEmptyState("folder-search", "Brak kubeconfigów w ~/.kube.");
+        return renderEmptyState("folder-search", t("empty.kubeconfigs"));
       }
       return state.remote.kubeconfigs
         .map((entry, index) =>
@@ -2267,7 +2278,7 @@ function renderRemoteRows(): string {
             selected: remoteRowSelected(index),
             icon: entry.isValid ? "server" : "triangle-alert",
             name: entry.name,
-            status: entry.isValid ? "kubeconfig" : "niepoprawny",
+            status: entry.isValid ? "kubeconfig" : t("kubectl.invalid"),
             size: "",
             info: entry.path,
             muted: !entry.isValid,
@@ -2276,7 +2287,7 @@ function renderRemoteRows(): string {
         .join("");
     case "namespaces":
       if (state.remote.namespaces.length === 0) {
-        return renderEmptyState("folder-open", "Brak namespace'ów.");
+        return renderEmptyState("folder-open", t("empty.namespaces"));
       }
       return state.remote.namespaces
         .map((entry, index) =>
@@ -2295,7 +2306,7 @@ function renderRemoteRows(): string {
         .join("");
     case "pods":
       if (state.remote.pods.length === 0) {
-        return renderEmptyState("box", "Brak podów.");
+        return renderEmptyState("box", t("empty.pods"));
       }
       return state.remote.pods
         .map((entry, index) =>
@@ -2308,14 +2319,14 @@ function renderRemoteRows(): string {
             name: entry.name,
             status: entry.phase ?? "",
             size: entry.ready,
-            info: `${entry.restartCount} restartów, ${entry.containers.length} kont.`,
+            info: podInfoLabel(entry),
             muted: entry.phase !== "Running",
           }),
         )
         .join("");
     case "containers":
       if (state.remote.containers.length === 0) {
-        return renderEmptyState("container", "Brak kontenerów.");
+        return renderEmptyState("container", t("empty.containers"));
       }
       return state.remote.containers
         .map((entry, index) =>
@@ -2326,7 +2337,7 @@ function renderRemoteRows(): string {
             selected: remoteRowSelected(index),
             icon: "container",
             name: entry.name,
-            status: entry.ready === null ? "" : entry.ready ? "ready" : "not ready",
+            status: entry.ready === null ? "" : entry.ready ? t("ready.yes") : t("ready.no"),
             size: "",
             info: entry.image ?? "",
             muted: entry.ready === false,
@@ -2335,7 +2346,7 @@ function renderRemoteRows(): string {
         .join("");
     case "remote":
       if (state.remote.entries.length === 0) {
-        return renderEmptyState("folder-open", "Pusty katalog.");
+        return renderEmptyState("folder-open", t("empty.directory"));
       }
       return state.remote.entries
         .map((entry, index) =>
@@ -2346,7 +2357,7 @@ function renderRemoteRows(): string {
             selected: remoteRowSelected(index),
             icon: iconForKind(entry.kind),
             name: displayRemoteName(entry),
-            status: entry.permissions ?? entry.kind,
+            status: entry.permissions ?? entryKindLabel(entry.kind),
             size: formatBytes(entry.size),
             info: entry.modifiedAt ?? "",
           }),
@@ -2357,13 +2368,13 @@ function renderRemoteRows(): string {
 
 function renderLocalRows(): string {
   if (state.local.loading) {
-    return renderEmptyState("loader", "Ładowanie...");
+    return renderEmptyState("loader", t("empty.loading"));
   }
   if (state.local.error) {
     return renderEmptyState("triangle-alert", state.local.error, "error");
   }
   if (state.local.entries.length === 0) {
-    return renderEmptyState("folder-open", "Pusty katalog.");
+    return renderEmptyState("folder-open", t("empty.directory"));
   }
 
   return state.local.entries
@@ -2478,11 +2489,12 @@ function renderTransfers(): string {
           const icon = entry.status === "running" ? "loader" : entry.status === "success" ? "check" : "circle-x";
           const direction = entry.direction === "upload" ? "upload" : entry.direction === "download" ? "download" : "file-down";
           const info = transferInfoLabel(entry);
+          const status = transferStatusLabel(entry.status);
           return `
             <div class="transfer-row ${entry.status}" style="${gridStyle}">
               <span class="transfer-status">
                 <i data-lucide="${icon}"></i>
-                <span class="truncate" title="${escapeAttr(entry.status)}">${escapeHtml(entry.status)}</span>
+                <span class="truncate" title="${escapeAttr(status)}">${escapeHtml(status)}</span>
               </span>
               <span><i data-lucide="${direction}"></i></span>
               <span class="transfer-copy-cell">
@@ -2496,27 +2508,27 @@ function renderTransfers(): string {
               <span class="transfer-info transfer-copy-cell">
                 <span class="truncate" title="${escapeAttr(info)}">${escapeHtml(info)}</span>
                 ${renderTransferCopyButton(entry, "info")}
-                ${entry.status === "running" ? `<button class="cancel-transfer-button" type="button" data-action="cancel-transfer" data-transfer-id="${entry.id}" title="Anuluj transfer">Anuluj</button>` : ""}
+                ${entry.status === "running" ? `<button class="cancel-transfer-button" type="button" data-action="cancel-transfer" data-transfer-id="${entry.id}" title="${escapeAttr(t("transfer.cancelTitle"))}">${escapeHtml(t("transfer.cancel"))}</button>` : ""}
                 ${entry.status === "running" ? `<span class="copy-progress" aria-hidden="true"></span>` : ""}
               </span>
             </div>
           `;
         })
         .join("")
-    : `<div class="transfer-empty">Brak transferów</div>`;
+    : `<div class="transfer-empty">${escapeHtml(t("transfer.empty"))}</div>`;
 
   return `
-    <section class="transfer-panel" aria-label="Transfery">
+    <section class="transfer-panel" aria-label="${escapeAttr(t("transfer.label"))}">
       <div class="transfer-header" style="${gridStyle}">
-        ${renderTransferHeaderCell("Status", 0)}
+        ${renderTransferHeaderCell(t("table.status"), 0)}
         ${renderTransferHeaderCell("", 1)}
-        ${renderTransferHeaderCell("Źródło", 2)}
-        ${renderTransferHeaderCell("Cel", 3)}
+        ${renderTransferHeaderCell(t("transfer.source"), 2)}
+        ${renderTransferHeaderCell(t("transfer.destination"), 3)}
         ${renderTransferHeaderCell(
-          "Info",
+          t("table.info"),
           4,
           false,
-          `<button class="transfer-clear-button" type="button" data-action="clear-transfers" title="Wyczyść zakończone transfery" aria-label="Wyczyść zakończone transfery" ${canClearTransfers ? "" : "disabled"}>
+          `<button class="transfer-clear-button" type="button" data-action="clear-transfers" title="${escapeAttr(t("transfer.clearFinished"))}" aria-label="${escapeAttr(t("transfer.clearFinished"))}" ${canClearTransfers ? "" : "disabled"}>
             <i data-lucide="list-x"></i>
           </button>`,
         )}
@@ -2528,8 +2540,9 @@ function renderTransfers(): string {
 
 function renderTransferCopyButton(entry: TransferEntry, field: TransferCopyField): string {
   const copied = copiedTransferCell?.id === entry.id && copiedTransferCell.field === field;
+  const label = copied ? t("transfer.copied") : t("transfer.copy");
   return `
-    <button class="transfer-copy-button ${copied ? "copied" : ""}" type="button" data-action="copy-transfer-field" data-transfer-id="${entry.id}" data-transfer-field="${field}" title="${copied ? "Skopiowano" : "Kopiuj"}" aria-label="${copied ? "Skopiowano" : "Kopiuj"}">
+    <button class="transfer-copy-button ${copied ? "copied" : ""}" type="button" data-action="copy-transfer-field" data-transfer-id="${entry.id}" data-transfer-field="${field}" title="${escapeAttr(label)}" aria-label="${escapeAttr(label)}">
       <i data-lucide="${copied ? "check" : "copy"}"></i>
     </button>
   `;
@@ -2540,7 +2553,7 @@ function renderTransferHeaderCell(label: string, index: number, resizable = true
     <span class="transfer-header-cell">
       <span>${escapeHtml(label)}</span>
       ${action}
-      ${resizable ? `<button class="transfer-resize-handle" type="button" data-transfer-resize="${index}" title="Zmień szerokość kolumny"></button>` : ""}
+      ${resizable ? `<button class="transfer-resize-handle" type="button" data-transfer-resize="${index}" title="${escapeAttr(t("transfer.resizeColumn"))}"></button>` : ""}
     </span>
   `;
 }
@@ -2553,6 +2566,7 @@ function renderKubectlConsole(): string {
         .map((entry) => {
           const output = kubectlLogOutput(entry);
           const copied = copiedKubectlLogId === entry.id;
+          const copyLabel = copied ? t("transfer.copied") : t("console.copyCommandResponse");
           return `
             <div class="console-entry ${entry.finished ? entry.success ? "success" : "failed" : "running"}">
               <div class="console-command">
@@ -2560,27 +2574,27 @@ function renderKubectlConsole(): string {
                 <span>${escapeHtml(kubectlLogStatus(entry))}</span>
                 <span>${escapeHtml(kubectlLogDuration(entry))}</span>
                 <code>${escapeHtml(entry.command)}</code>
-                <button class="console-copy-button" type="button" data-action="copy-kubectl-message" data-log-id="${entry.id}" title="${copied ? "Skopiowano" : "Kopiuj komendę i odpowiedź"}" aria-label="${copied ? "Skopiowano" : "Kopiuj komendę i odpowiedź"}">
+                <button class="console-copy-button" type="button" data-action="copy-kubectl-message" data-log-id="${entry.id}" title="${escapeAttr(copyLabel)}" aria-label="${escapeAttr(copyLabel)}">
                   <i data-lucide="${copied ? "check" : "copy"}"></i>
                 </button>
               </div>
               <div class="console-output">
-                ${output ? `<pre>${escapeHtml(output)}</pre>` : `<pre class="muted">Brak outputu</pre>`}
+                ${output ? `<pre>${escapeHtml(output)}</pre>` : `<pre class="muted">${escapeHtml(t("console.noOutput"))}</pre>`}
               </div>
             </div>
           `;
         })
         .join("")
-    : `<div class="console-empty">Brak wywołań kubectl</div>`;
+    : `<div class="console-empty">${escapeHtml(t("console.empty"))}</div>`;
 
   return `
-    <section class="console-panel" aria-label="Konsola kubectl">
+    <section class="console-panel" aria-label="${escapeAttr(t("console.label"))}">
       <div class="console-header">
         <div class="console-title">
-          <span>Konsola kubectl</span>
+          <span>${escapeHtml(t("console.title"))}</span>
           <span>${renderKubectlVersionLabel()}</span>
         </div>
-        <button class="console-toggle" type="button" data-action="toggle-console" title="${state.consoleExpanded ? "Zminimalizuj konsolę" : "Powiększ konsolę"}">
+        <button class="console-toggle" type="button" data-action="toggle-console" title="${escapeAttr(state.consoleExpanded ? t("console.collapse") : t("console.expand"))}">
           <i data-lucide="${state.consoleExpanded ? "chevron-down" : "chevron-up"}"></i>
         </button>
       </div>
@@ -2591,12 +2605,14 @@ function renderKubectlConsole(): string {
 
 function renderKubectlVersionLabel(): string {
   if (!state.kubectl) {
-    return "sprawdzanie...";
+    return escapeHtml(t("console.checking"));
   }
   if (!state.kubectl.available) {
-    return state.kubectl.error ? `niedostępny: ${escapeHtml(state.kubectl.error)}` : "niedostępny";
+    return state.kubectl.error
+      ? `${escapeHtml(t("console.unavailable"))}: ${escapeHtml(state.kubectl.error)}`
+      : escapeHtml(t("console.unavailable"));
   }
-  return escapeHtml(state.kubectl.version ?? "dostępny");
+  return escapeHtml(state.kubectl.version ?? t("console.available"));
 }
 
 function renderContextMenu(): string {
@@ -2617,32 +2633,32 @@ function renderContextMenu(): string {
     <div class="context-menu" style="left: ${menu.x}px; top: ${menu.y}px;">
       ${
         remoteOpen
-          ? `<button type="button" data-action="open-remote"><i data-lucide="folder-open"></i><span>Otwórz</span></button>`
+          ? `<button type="button" data-action="open-remote"><i data-lucide="folder-open"></i><span>${escapeHtml(t("action.open"))}</span></button>`
           : ""
       }
       ${
         remoteDownload
-          ? `<button type="button" data-action="download"><i data-lucide="download"></i><span>Pobierz</span></button>`
+          ? `<button type="button" data-action="download"><i data-lucide="download"></i><span>${escapeHtml(t("action.download"))}</span></button>`
           : ""
       }
       ${
         remoteDelete
-          ? `<button class="danger-menu-item" type="button" data-action="delete-remote"><i data-lucide="trash-2"></i><span>Usuń</span></button>`
+          ? `<button class="danger-menu-item" type="button" data-action="delete-remote"><i data-lucide="trash-2"></i><span>${escapeHtml(t("action.delete"))}</span></button>`
           : ""
       }
       ${
         localOpen
-          ? `<button type="button" data-action="open-local"><i data-lucide="folder-open"></i><span>Otwórz</span></button>`
+          ? `<button type="button" data-action="open-local"><i data-lucide="folder-open"></i><span>${escapeHtml(t("action.open"))}</span></button>`
           : ""
       }
       ${
         localUpload
-          ? `<button type="button" data-action="upload"><i data-lucide="upload"></i><span>Wyślij</span></button>`
+          ? `<button type="button" data-action="upload"><i data-lucide="upload"></i><span>${escapeHtml(t("action.upload"))}</span></button>`
           : ""
       }
       ${
         localDelete
-          ? `<button class="danger-menu-item" type="button" data-action="delete-local"><i data-lucide="trash-2"></i><span>Usuń</span></button>`
+          ? `<button class="danger-menu-item" type="button" data-action="delete-local"><i data-lucide="trash-2"></i><span>${escapeHtml(t("action.delete"))}</span></button>`
           : ""
       }
     </div>
@@ -2737,10 +2753,35 @@ function iconForKind(kind: EntryKind): string {
 }
 
 function localKindLabel(entry: LocalFileEntry): string {
+  const kind = entryKindLabel(entry.kind);
   if (entry.readonly) {
-    return `${entry.kind}, read-only`;
+    return t("kind.readonly", { kind });
   }
-  return entry.kind;
+  return kind;
+}
+
+function entryKindLabel(kind: EntryKind): string {
+  switch (kind) {
+    case "directory":
+      return t("kind.directory");
+    case "file":
+      return t("kind.file");
+    case "symlink":
+      return t("kind.symlink");
+    default:
+      return t("kind.unknown");
+  }
+}
+
+function podInfoLabel(entry: PodEntry): string {
+  return [
+    countLabel(entry.restartCount, "pod.restarts.one", "pod.restarts.other"),
+    countLabel(entry.containers.length, "pod.containers.one", "pod.containers.other"),
+  ].join(", ");
+}
+
+function countLabel(count: number, oneKey: TranslationKey, otherKey: TranslationKey): string {
+  return t(count === 1 ? oneKey : otherKey, { count });
 }
 
 function displayRemoteName(entry: RemoteFileEntry): string {
@@ -2787,7 +2828,7 @@ function formatLocalDate(value: number | null): string {
   if (!value) {
     return "";
   }
-  return new Date(value).toLocaleString(undefined, {
+  return new Date(value).toLocaleString(locale, {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -2804,6 +2845,17 @@ function elapsedLabel(entry: TransferEntry): string {
 
 function transferInfoLabel(entry: TransferEntry): string {
   return entry.error ?? elapsedLabel(entry);
+}
+
+function transferStatusLabel(status: TransferStatus): string {
+  switch (status) {
+    case "running":
+      return t("transfer.status.running");
+    case "success":
+      return t("transfer.status.success");
+    case "failed":
+      return t("transfer.status.failed");
+  }
 }
 
 function isTransferCopyField(value: string | undefined): value is TransferCopyField {
@@ -2825,7 +2877,7 @@ function kubectlLogStatus(entry: KubectlLogEntry): string {
   if (!entry.finished) {
     return "RUN";
   }
-  return entry.success ? "OK" : "BŁĄD";
+  return entry.success ? "OK" : t("console.errorStatus");
 }
 
 function kubectlLogOutput(entry: KubectlLogEntry): string {
@@ -2833,8 +2885,8 @@ function kubectlLogOutput(entry: KubectlLogEntry): string {
 }
 
 function kubectlLogClipboardText(entry: KubectlLogEntry): string {
-  const output = kubectlLogOutput(entry) || "Brak outputu";
-  return `Komenda:\n${entry.command}\n\nOdpowiedź:\n${output}`;
+  const output = kubectlLogOutput(entry) || t("console.noOutput");
+  return t("console.clipboardText", { command: entry.command, output });
 }
 
 function kubectlLogDuration(entry: KubectlLogEntry): string {
@@ -2848,7 +2900,7 @@ function formatLogTime(value: number): string {
   if (!value) {
     return "";
   }
-  return new Date(value).toLocaleTimeString(undefined, {
+  return new Date(value).toLocaleTimeString(locale, {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",

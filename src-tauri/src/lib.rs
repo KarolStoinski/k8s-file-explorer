@@ -8,7 +8,7 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::{AtomicU64, AtomicU8, Ordering},
     sync::{Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -29,6 +29,16 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 static KUBECTL_LOGS: OnceLock<Mutex<Vec<KubectlLogEntry>>> = OnceLock::new();
 static ACTIVE_KUBECTL_OPERATIONS: OnceLock<Mutex<HashMap<u64, u32>>> = OnceLock::new();
 static NEXT_KUBECTL_LOG_ID: AtomicU64 = AtomicU64::new(1);
+static APP_LANGUAGE: AtomicU8 = AtomicU8::new(LANGUAGE_EN);
+
+const LANGUAGE_EN: u8 = 0;
+const LANGUAGE_PL: u8 = 1;
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum AppLanguage {
+    En,
+    Pl,
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -171,6 +181,16 @@ struct KubectlLogEntry {
 }
 
 #[tauri::command]
+fn set_app_language(language: String) {
+    let language = if language.to_ascii_lowercase().starts_with("pl") {
+        LANGUAGE_PL
+    } else {
+        LANGUAGE_EN
+    };
+    APP_LANGUAGE.store(language, Ordering::Relaxed);
+}
+
+#[tauri::command]
 fn check_kubectl() -> ToolStatus {
     let args = kubectl_args_with_request_timeout(os_args(["version", "--client", "-o", "json"]));
     let program = kubectl_program();
@@ -245,7 +265,7 @@ fn scan_kubeconfigs() -> Result<Vec<KubeconfigEntry>, String> {
             error: if looks_valid {
                 None
             } else {
-                Some("Plik nie wygląda jak kubeconfig.".to_string())
+                Some(invalid_kubeconfig_message())
             },
         });
     }
@@ -550,10 +570,10 @@ fn list_local_dir_blocking(path: Option<String>) -> Result<LocalDirectory, Strin
     };
 
     if !directory.exists() {
-        return Err("Lokalna ścieżka nie istnieje.".to_string());
+        return Err(local_path_missing_message());
     }
     if !directory.is_dir() {
-        return Err("Lokalna ścieżka nie jest katalogiem.".to_string());
+        return Err(local_path_not_directory_message());
     }
 
     let mut entries = Vec::new();
@@ -694,7 +714,7 @@ fn copy_remote_to_local_blocking(
     Ok(TransferResult {
         source: remote_path,
         destination: local_path,
-        message: "Transfer zakończony.".to_string(),
+        message: transfer_complete_message(),
     })
 }
 
@@ -741,7 +761,7 @@ fn copy_local_to_remote_blocking(
     Ok(TransferResult {
         source: local_path,
         destination: remote_path,
-        message: "Transfer zakończony.".to_string(),
+        message: transfer_complete_message(),
     })
 }
 
@@ -790,7 +810,7 @@ fn cancel_kubectl_operation(operation_id: u64) -> Result<(), String> {
         .get(&operation_id)
         .copied()
     else {
-        return Err("Operacja nie jest już aktywna.".to_string());
+        return Err(inactive_operation_message());
     };
 
     kill_process(process_id)
@@ -815,6 +835,131 @@ async fn confirm_dialog(title: String, message: String) -> Result<bool, String> 
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+fn app_language() -> AppLanguage {
+    match APP_LANGUAGE.load(Ordering::Relaxed) {
+        LANGUAGE_PL => AppLanguage::Pl,
+        _ => AppLanguage::En,
+    }
+}
+
+fn invalid_kubeconfig_message() -> String {
+    match app_language() {
+        AppLanguage::Pl => "Plik nie wygląda jak kubeconfig.".to_string(),
+        AppLanguage::En => "The file does not look like a kubeconfig.".to_string(),
+    }
+}
+
+fn local_path_missing_message() -> String {
+    match app_language() {
+        AppLanguage::Pl => "Lokalna ścieżka nie istnieje.".to_string(),
+        AppLanguage::En => "Local path does not exist.".to_string(),
+    }
+}
+
+fn local_path_not_directory_message() -> String {
+    match app_language() {
+        AppLanguage::Pl => "Lokalna ścieżka nie jest katalogiem.".to_string(),
+        AppLanguage::En => "Local path is not a directory.".to_string(),
+    }
+}
+
+fn transfer_complete_message() -> String {
+    match app_language() {
+        AppLanguage::Pl => "Transfer zakończony.".to_string(),
+        AppLanguage::En => "Transfer completed.".to_string(),
+    }
+}
+
+fn inactive_operation_message() -> String {
+    match app_language() {
+        AppLanguage::Pl => "Operacja nie jest już aktywna.".to_string(),
+        AppLanguage::En => "Operation is no longer active.".to_string(),
+    }
+}
+
+fn program_not_found_message(program: &str) -> String {
+    match app_language() {
+        AppLanguage::Pl => format!("Nie znaleziono programu `{program}` w PATH."),
+        AppLanguage::En => format!("Program `{program}` was not found in PATH."),
+    }
+}
+
+fn timeout_message(program: &str, timeout_seconds: u64) -> String {
+    match app_language() {
+        AppLanguage::Pl => format!(
+            "Przekroczono limit czasu ({timeout_seconds}s) dla programu `{program}`. \
+             Możesz zwiększyć limit zmienną środowiskową {KUBECTL_TIMEOUT_ENV}."
+        ),
+        AppLanguage::En => format!(
+            "Timed out after {timeout_seconds}s running `{program}`. \
+             You can increase the limit with the {KUBECTL_TIMEOUT_ENV} environment variable."
+        ),
+    }
+}
+
+fn no_process_details_message() -> String {
+    match app_language() {
+        AppLanguage::Pl => "Brak dodatkowych informacji.".to_string(),
+        AppLanguage::En => "No additional details.".to_string(),
+    }
+}
+
+fn process_exit_code_message(command: &str, code: i32, details: &str) -> String {
+    match app_language() {
+        AppLanguage::Pl => format!("{command} zakończył się kodem {code}: {details}"),
+        AppLanguage::En => format!("{command} exited with code {code}: {details}"),
+    }
+}
+
+fn process_failed_message(command: &str, details: &str) -> String {
+    match app_language() {
+        AppLanguage::Pl => format!("{command} zakończył się błędem: {details}"),
+        AppLanguage::En => format!("{command} failed: {details}"),
+    }
+}
+
+fn missing_container_scope(target: &RemoteTarget) -> String {
+    match app_language() {
+        AppLanguage::Pl => target
+            .container
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .map(|container| format!("kontener `{container}` w podzie `{}`", target.pod))
+            .unwrap_or_else(|| format!("pod `{}`", target.pod)),
+        AppLanguage::En => target
+            .container
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .map(|container| format!("container `{container}` in pod `{}`", target.pod))
+            .unwrap_or_else(|| format!("pod `{}`", target.pod)),
+    }
+}
+
+fn root_local_transfer_path_message() -> String {
+    match app_language() {
+        AppLanguage::Pl => {
+            "Nie można użyć głównego katalogu dysku jako lokalnej ścieżki transferu.".to_string()
+        }
+        AppLanguage::En => "Cannot use the root directory as the local transfer path.".to_string(),
+    }
+}
+
+fn parent_directory_message(local_path: &str) -> String {
+    match app_language() {
+        AppLanguage::Pl => {
+            format!("Nie można ustalić katalogu nadrzędnego dla `{local_path}`.")
+        }
+        AppLanguage::En => format!("Cannot determine the parent directory for `{local_path}`."),
+    }
+}
+
+fn home_dir_missing_message() -> String {
+    match app_language() {
+        AppLanguage::Pl => "Nie można ustalić katalogu domowego.".to_string(),
+        AppLanguage::En => "Cannot determine the home directory.".to_string(),
+    }
 }
 
 fn run_kubectl(args: Vec<OsString>) -> Result<String, String> {
@@ -1051,7 +1196,7 @@ fn run_program(
         .spawn()
         .map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
-                format!("Nie znaleziono programu `{program_display}` w PATH.")
+                program_not_found_message(&program_display)
             } else {
                 error.to_string()
             }
@@ -1073,11 +1218,7 @@ fn run_program(
             if let Some(operation_id) = operation_id {
                 unregister_kubectl_operation(operation_id);
             }
-            return Err(format!(
-                "Przekroczono limit czasu ({timeout_seconds}s) dla programu `{program_display}`. \
-                 Możesz zwiększyć limit zmienną środowiskową {KUBECTL_TIMEOUT_ENV}.",
-                timeout_seconds = timeout.as_secs()
-            ));
+            return Err(timeout_message(&program_display, timeout.as_secs()));
         }
     };
     if let Some(operation_id) = operation_id {
@@ -1126,12 +1267,12 @@ fn format_process_error(command: &str, output: &ProcessOutput) -> String {
     } else if !output.stdout.is_empty() {
         output.stdout.clone()
     } else {
-        "Brak dodatkowych informacji.".to_string()
+        no_process_details_message()
     };
 
     match output.code {
-        Some(code) => format!("{command} zakończył się kodem {code}: {details}"),
-        None => format!("{command} zakończył się błędem: {details}"),
+        Some(code) => process_exit_code_message(command, code, &details),
+        None => process_failed_message(command, &details),
     }
 }
 
@@ -1158,17 +1299,18 @@ fn is_missing_container_command_error(output: &ProcessOutput, command: &str) -> 
 }
 
 fn missing_container_ls_message(target: &RemoteTarget, path: &str) -> String {
-    let scope = target
-        .container
-        .as_deref()
-        .filter(|value| !value.is_empty())
-        .map(|container| format!("kontener `{container}` w podzie `{}`", target.pod))
-        .unwrap_or_else(|| format!("pod `{}`", target.pod));
+    let scope = missing_container_scope(target);
 
-    format!(
-        "Nie można wyświetlić katalogu `{path}`.\n\
-         {scope} nie ma programu `ls`, którego aplikacja używa do listowania plików.",
-    )
+    match app_language() {
+        AppLanguage::Pl => format!(
+            "Nie można wyświetlić katalogu `{path}`.\n\
+             {scope} nie ma programu `ls`, którego aplikacja używa do listowania plików.",
+        ),
+        AppLanguage::En => format!(
+            "Cannot show directory `{path}`.\n\
+             {scope} does not have the `ls` program that the application uses to list files.",
+        ),
+    }
 }
 
 fn local_kubectl_cp_arg(local_path: &str) -> Result<LocalKubectlCpArg, String> {
@@ -1180,12 +1322,12 @@ fn local_kubectl_cp_arg(local_path: &str) -> Result<LocalKubectlCpArg, String> {
         });
     }
 
-    let file_name = path.file_name().ok_or_else(|| {
-        "Nie można użyć głównego katalogu dysku jako lokalnej ścieżki transferu.".to_string()
-    })?;
+    let file_name = path
+        .file_name()
+        .ok_or_else(root_local_transfer_path_message)?;
     let parent = path
         .parent()
-        .ok_or_else(|| format!("Nie można ustalić katalogu nadrzędnego dla `{local_path}`."))?;
+        .ok_or_else(|| parent_directory_message(local_path))?;
 
     Ok(LocalKubectlCpArg {
         arg: file_name.to_os_string(),
@@ -1371,7 +1513,7 @@ fn kind_order(kind: &EntryKind) -> u8 {
 }
 
 fn home_dir() -> Result<PathBuf, String> {
-    dirs::home_dir().ok_or_else(|| "Nie można ustalić katalogu domowego.".to_string())
+    dirs::home_dir().ok_or_else(home_dir_missing_message)
 }
 
 fn path_to_string(path: &Path) -> String {
@@ -1449,6 +1591,7 @@ fn sanitize_file_name(name: &str) -> String {
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
+            set_app_language,
             check_kubectl,
             cancel_kubectl_operation,
             get_kubectl_logs,
