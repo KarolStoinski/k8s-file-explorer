@@ -504,10 +504,15 @@ function resizeTransferColumn(event: MouseEvent): void {
 }
 
 function updateTransferColumnStyles(): void {
-  const value = state.transferColumns.map((width) => `${width}px`).join(" ");
+  const value = transferColumnTemplate();
   app.querySelectorAll<HTMLElement>(".transfer-header, .transfer-row").forEach((element) => {
     element.style.setProperty("--transfer-columns", value);
   });
+}
+
+function transferColumnTemplate(): string {
+  const [status, direction, source, destination, infoMin] = state.transferColumns;
+  return `${status}px ${direction}px ${source}px ${destination}px minmax(${infoMin}px, 1fr)`;
 }
 
 function scheduleHoverPrefetch(event: MouseEvent): void {
@@ -2453,7 +2458,7 @@ function renderBreadcrumbButton(label: string, level: string, path = ""): string
 }
 
 function renderTransfers(): string {
-  const gridStyle = `--transfer-columns: ${state.transferColumns.map((value) => `${value}px`).join(" ")};`;
+  const gridStyle = `--transfer-columns: ${transferColumnTemplate()};`;
   const rows = state.transfers.length
     ? state.transfers
         .map((entry) => {

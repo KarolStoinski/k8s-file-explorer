@@ -441,7 +441,7 @@ button {
 .transfer-header,
 .transfer-row {
   display: grid;
-  grid-template-columns: var(--transfer-columns, 120px 36px 360px 360px 260px);
+  grid-template-columns: var(--transfer-columns, 120px 36px 360px 360px minmax(260px, 1fr));
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -835,6 +835,6 @@ button {
 
   .transfer-header,
   .transfer-row {
-    grid-template-columns: 105px 28px minmax(180px, 1fr) minmax(180px, 1fr) minmax(120px, 0.6fr);
+    grid-template-columns: 105px 28px minmax(180px, 1fr) minmax(180px, 1fr) minmax(160px, 1fr);
   }
 }
