@@ -130,7 +130,7 @@ const translations = {
     signalThreeTitle: "Transfery w tle",
     signalThreeText: "Pobrania i wysyłki są widoczne i możliwe do anulowania.",
     featuresEyebrow: "Do codziennej pracy z plikami Kubernetes",
-    featuresTitle: "Skupiony eksplorator plików dla podów",
+    featuresTitle: "Eksplorator plików dla podów",
     featuresLead:
       "K8s File Explorer przyspiesza konkretną pracę: znalezienie poda, sprawdzenie jego systemu plików i bezpieczne przenoszenie plików przez kubectl.",
     featureOneTitle: "Przeglądaj pliki poda wizualnie",
