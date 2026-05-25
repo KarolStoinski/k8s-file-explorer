@@ -42,7 +42,7 @@ npm run tauri:build
 Tauri builds the binary for the current operating system. Build Windows artifacts on Windows and macOS artifacts on macOS.
 
 For a macOS DMG that will run on other computers, build a Developer ID signed
-and notarized release. See [docs/macos-release.md](docs/macos-release.md).
+and notarized release. See [macos-release.md](macos-release.md).
 
 ## MVP Features
 
