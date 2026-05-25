@@ -1,5 +1,7 @@
 # K8s File Explorer
 
+![K8s File Explorer hero](docs/hero.png)
+
 A desktop file explorer for Kubernetes pods, built with Tauri.
 
 ## Requirements
