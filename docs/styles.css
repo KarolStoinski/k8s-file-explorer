@@ -137,7 +137,9 @@ a.button {
 
 .hero {
   position: relative;
-  height: 900px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   overflow: hidden;
   padding: 72px 40px 0;
   border-bottom: 1px solid var(--line);
@@ -150,7 +152,6 @@ a.button {
   display: flex;
   flex-direction: column;
   align-items: center;
-  height: 310px;
   width: min(740px, 100%);
   margin: 0 auto;
   text-align: center;
@@ -177,6 +178,24 @@ a.button {
   width: min(680px, 100%);
   color: var(--muted);
   font-size: 1.18rem;
+}
+
+.hero-slogan {
+  margin: 22px 0 0;
+  color: var(--ink);
+}
+
+.hero-slogan blockquote {
+  margin: 0;
+  font-size: 1.02rem;
+  font-style: italic;
+  font-weight: 750;
+}
+
+.hero-slogan figcaption {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 0.9rem;
 }
 
 .download-actions,
@@ -236,19 +255,21 @@ a.button {
 }
 
 .hero-visual {
-  position: absolute;
-  right: 40px;
-  bottom: -168px;
-  left: 40px;
+  position: relative;
+  right: auto;
+  bottom: auto;
+  left: auto;
   z-index: 1;
   display: flex;
   justify-content: center;
+  width: min(1180px, 100%);
+  margin: 44px auto 0;
   pointer-events: none;
 }
 
 .app-preview {
   display: block;
-  width: min(1180px, 100%);
+  width: 100%;
   height: auto;
   border-radius: 8px;
 }
@@ -507,7 +528,6 @@ a.button {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1px;
-  margin-top: 36px;
   background: var(--line);
   border-bottom: 1px solid var(--line);
 }
@@ -779,12 +799,11 @@ a.button {
   }
 
   .hero {
-    height: 860px;
     padding: 56px 24px 0;
   }
 
   .hero-copy {
-    height: 290px;
+    width: min(740px, 100%);
   }
 
   .hero h1 {
@@ -792,13 +811,14 @@ a.button {
   }
 
   .hero-visual {
-    bottom: -192px;
-    right: 24px;
-    left: 24px;
+    right: auto;
+    left: auto;
+    width: min(1040px, 100%);
+    margin-bottom: 0;
   }
 
   .app-preview {
-    width: min(1040px, 100%);
+    width: 100%;
   }
 
   .preview-transfer-header,
@@ -877,7 +897,9 @@ a.button {
     right: auto;
     bottom: auto;
     left: auto;
+    width: 100%;
     margin-top: 30px;
+    margin-bottom: 0;
   }
 
   .app-preview {

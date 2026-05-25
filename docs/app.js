@@ -9,6 +9,7 @@ const translations = {
     eyebrow: "Desktop explorer for Kubernetes pods",
     heroLead:
       "Browse pod files, move artifacts, and open remote files locally without turning every file task into a chain of kubectl commands.",
+    heroSlogan: "Life is too short to type kubectl cp by hand",
     heroDownloadMac: "Download for macOS (Apple Silicon)",
     heroDownloadWindows: "Download for Windows",
     heroReleases: "View all GitHub releases",
@@ -92,6 +93,7 @@ const translations = {
     eyebrow: "Desktopowy eksplorator podów Kubernetes",
     heroLead:
       "Przeglądaj pliki w podach, przenoś artefakty i otwieraj zdalne pliki lokalnie bez składania za każdym razem sekwencji komend kubectl.",
+    heroSlogan: "Życie jest za krótkie na ręczne klepanie kubectl cp",
     heroDownloadMac: "Pobierz dla macOS (Apple Silicon)",
     heroDownloadWindows: "Pobierz dla Windows",
     heroReleases: "Zobacz wszystkie wydania na GitHubie",
