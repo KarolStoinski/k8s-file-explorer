@@ -7,3 +7,5 @@ src-tauri/gen/
 /.idea/
 *.iml
 LOCAL_TODO.md
+mac-release.sh
+mac-release.env
